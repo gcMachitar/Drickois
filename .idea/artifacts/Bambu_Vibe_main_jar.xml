@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="Bambu-Vibe-main:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/Bambu_Vibe_main_jar</output-path>
+    <root id="archive" name="Bambu-Vibe-main.jar">
+      <element id="module-output" name="Bambu-Vibe-main" />
+    </root>
+  </artifact>
+</component>

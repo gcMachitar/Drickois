@@ -1,0 +1,10 @@
+----- Bambu Vibe Receipt -----
+Date: 2025-06-21 02:28:35
+------------------------------
+Item Ordered: Bamboo Plant Markers
+Quantity: 1
+Price Per Unit: ₱80.00
+Total Amount: ₱80.00
+Remaining Stock: 33
+------------------------------
+Thank you for your order!

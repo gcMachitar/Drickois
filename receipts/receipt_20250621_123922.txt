@@ -1,0 +1,10 @@
+----- Bambu Vibe Receipt -----
+Date: 2025-06-21 12:39:22
+------------------------------
+Item Ordered: Bamboo Toothbrush
+Quantity: 1
+Price Per Unit: ₱100.00
+Total Amount: ₱100.00
+Remaining Stock: 79
+------------------------------
+Thank you for your order!
