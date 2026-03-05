@@ -1,0 +1,8 @@
+﻿<component name="ArtifactManager">
+  <artifact type="jar" name="DrickSysApp:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/DrickSysApp_jar</output-path>
+    <root id="archive" name="DrickSysApp.jar">
+      <element id="module-output" name="DrickSysApp" />
+    </root>
+  </artifact>
+</component>
