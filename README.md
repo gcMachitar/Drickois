@@ -1,5 +1,15 @@
-﻿Bambu Vibe Logistics Management System
+Bambu Vibe Logistics Management System
 A Java Swing application for inventory and customer management
+
+Supabase setup (required for collaborators)
+- This repo ignores `supabase.properties` (it may contain secrets), so fresh clones must create it locally.
+- Copy `supabase.properties.example` to `supabase.properties`.
+- Fill in:
+  - `SUPABASE_URL`
+  - `SUPABASE_PUBLISHABLE_KEY` (or use `SUPABASE_ANON_KEY`)
+- You can use environment variables instead of a file:
+  - `SUPABASE_URL`
+  - `SUPABASE_PUBLISHABLE_KEY` or `SUPABASE_ANON_KEY`
 
 ERD-first setup
 - Run [erd_schema.sql](./erd_schema.sql) in Supabase SQL editor to create the ERD tables.

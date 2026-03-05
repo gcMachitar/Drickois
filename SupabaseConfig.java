@@ -6,6 +6,7 @@ import java.util.Properties;
 
 public final class SupabaseConfig {
     private static final String DEFAULT_URL = "https://dqndvgmklfnwtvrwgioa.supabase.co";
+    private static final String DEFAULT_PUBLISHABLE_KEY = "sb_publishable_zpSYplET5joQRYgJDXxKVA_6do8wZi-";
     private static final String PROPERTIES_FILE = "supabase.properties";
     private static final Properties FILE_PROPERTIES = loadFileProperties();
 
@@ -33,6 +34,9 @@ public final class SupabaseConfig {
         }
         if (value == null || value.isBlank()) {
             value = FILE_PROPERTIES.getProperty("SUPABASE_ANON_KEY", "");
+        }
+        if (value == null || value.isBlank()) {
+            value = DEFAULT_PUBLISHABLE_KEY;
         }
         return value == null ? "" : value.trim();
     }

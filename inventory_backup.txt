@@ -1,0 +1,6 @@
+Inventory Text Backup
+Saved at: 2026-03-05 18:29:02
+------------------------------------------------------------
+Item Name | Category | Quantity | Price (₱) | Date Added | Date Updated
+------------------------------------------------------------
+mark | Coffee | 0 | 100.0 |  | 

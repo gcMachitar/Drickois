@@ -12,7 +12,9 @@ public class LoginFrame extends JFrame {
     private final SupabaseClient supabaseClient;
     private final SupabaseSessionStore sessionStore;
 
-    private static final Color LOGIN_TEXT_COLOR   = new Color(50, 80, 45);
+    private static final Color LOGIN_TITLE_COLOR  = new Color(230, 220, 190);
+    private static final Color LOGIN_LABEL_COLOR  = new Color(240, 232, 210);
+    private static final Color LOGIN_BUTTON_TEXT_COLOR = new Color(40, 75, 50);
     private static final Color LOGIN_BUTTON_COLOR = new Color(180, 150, 110);
     private static final Color LOGIN_BORDER_COLOR = new Color(101, 67, 33);
     private static final Font  LOGIN_FONT         = new Font("Georgia", Font.PLAIN, 14);
@@ -44,7 +46,7 @@ public class LoginFrame extends JFrame {
 
         JLabel logoLabel = new JLabel("Drickoi's", SwingConstants.CENTER);
         logoLabel.setFont(new Font("Georgia", Font.BOLD, 32));
-        logoLabel.setForeground(LOGIN_TEXT_COLOR);
+        logoLabel.setForeground(LOGIN_TITLE_COLOR);
         mainPanel.add(logoLabel, BorderLayout.NORTH);
 
         JPanel loginInputPanel = new JPanel();
@@ -61,7 +63,8 @@ public class LoginFrame extends JFrame {
 
         showPasswordCheckBox.setOpaque(false);
         showPasswordCheckBox.setFont(LOGIN_FONT);
-        showPasswordCheckBox.setForeground(LOGIN_TEXT_COLOR);
+        showPasswordCheckBox.setForeground(LOGIN_LABEL_COLOR);
+        showPasswordCheckBox.setFocusPainted(false);
         showPasswordCheckBox.addActionListener(this::handleTogglePasswordVisibilityAction);
 
         loginInputPanel.add(createLabeledPanel("Email:", usernameField));
@@ -97,10 +100,12 @@ public class LoginFrame extends JFrame {
     private JPanel createLabeledPanel(String labelText, JComponent field) {
         JLabel label = new JLabel(labelText);
         label.setFont(new Font("Georgia", Font.BOLD, 14));
-        label.setForeground(Color.BLACK);
+        label.setForeground(LOGIN_LABEL_COLOR);
+        label.setPreferredSize(new Dimension(85, label.getPreferredSize().height));
 
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, 10, 5));
+        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
         panel.setOpaque(false);
+        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(label);
         panel.add(field);
         return panel;
@@ -173,7 +178,7 @@ public class LoginFrame extends JFrame {
         JButton button = new JButton(text);
         button.setFont(LOGIN_FONT.deriveFont(Font.BOLD));
         button.setBackground(LOGIN_BUTTON_COLOR);
-        button.setForeground(LOGIN_TEXT_COLOR);
+        button.setForeground(LOGIN_BUTTON_TEXT_COLOR);
         button.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(LOGIN_BORDER_COLOR),
                 BorderFactory.createEmptyBorder(8, 15, 8, 15)
@@ -197,7 +202,7 @@ public class LoginFrame extends JFrame {
     private void attemptLogin() {
         if (!isSupabaseConfigured()) {
             JOptionPane.showMessageDialog(this,
-                    "Set SUPABASE_PUBLISHABLE_KEY before login.",
+                    getSupabaseMissingConfigMessage("login"),
                     "Supabase Config Missing",
                     JOptionPane.ERROR_MESSAGE);
             return;
@@ -279,7 +284,7 @@ public class LoginFrame extends JFrame {
         event.getSource();
         if (!isSupabaseConfigured()) {
             JOptionPane.showMessageDialog(this,
-                    "Set SUPABASE_PUBLISHABLE_KEY before registration.",
+                    getSupabaseMissingConfigMessage("registration"),
                     "Supabase Config Missing",
                     JOptionPane.ERROR_MESSAGE);
             return;
@@ -296,6 +301,13 @@ public class LoginFrame extends JFrame {
 
     private boolean isSupabaseConfigured() {
         return !SupabaseConfig.getPublishableKey().isBlank();
+    }
+
+    private String getSupabaseMissingConfigMessage(String action) {
+        return "Set SUPABASE_PUBLISHABLE_KEY (or SUPABASE_ANON_KEY) before " + action + ".\n"
+                + "You can also create supabase.properties in the project folder with:\n"
+                + "SUPABASE_URL=...\n"
+                + "SUPABASE_PUBLISHABLE_KEY=...";
     }
 
     public static void main(String[] args) {
