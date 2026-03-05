@@ -79,7 +79,7 @@ public class DrickSysApp extends JFrame {
         this.supabaseClient = supabaseClient;
         this.session = session;
 
-        setTitle("Bambu Vibe");
+        setTitle("Dricko's");
         setIconImage(new ImageIcon("resources/myicon.png").getImage());
         setSize(400, 450);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);

@@ -18,7 +18,7 @@ public class LoginFrame extends JFrame {
     private static final Font  LOGIN_FONT         = new Font("Georgia", Font.PLAIN, 14);
 
     public LoginFrame() {
-        setTitle("Login - Bambu Vibe");
+        setTitle("Login");
         setIconImage(new ImageIcon("resources/myicon.png").getImage());
         setResizable(false);
         setSize(400, 450);
@@ -42,7 +42,7 @@ public class LoginFrame extends JFrame {
         mainPanel.setOpaque(false);
         mainPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
 
-        JLabel logoLabel = new JLabel("Bambu Vibe", SwingConstants.CENTER);
+        JLabel logoLabel = new JLabel("Drickoi's", SwingConstants.CENTER);
         logoLabel.setFont(new Font("Georgia", Font.BOLD, 32));
         logoLabel.setForeground(LOGIN_TEXT_COLOR);
         mainPanel.add(logoLabel, BorderLayout.NORTH);
