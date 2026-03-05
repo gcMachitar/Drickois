@@ -1,0 +1,54 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Fragment>
+        <DirectoryRef Id="INSTALLFOLDER">
+            <Directory Id="dir09903639A005C2D197EB19C866CDE8EB" Name="resources" />
+        </DirectoryRef>
+    </Fragment>
+    <Fragment>
+        <ComponentGroup Id="DistFiles">
+            <Component Id="cmpBB066E1ED41787377596F1814FF4F3A3" Directory="INSTALLFOLDER" Guid="{F83E761C-5102-4DEB-AE69-F00308381969}">
+                <File Id="fil1D8387524D79B298D3497479330F46B5" KeyPath="yes" Source="$(var.SourceDir)\DrickSysApp.jar" />
+            </Component>
+            <Component Id="cmp46C4CBA566BBFEB04B057E33BE12AA7F" Directory="INSTALLFOLDER" Guid="{1A76848B-5E94-4980-9C10-269CAC201D62}">
+                <File Id="fil1BF05828A99B082F0EE86DDDFA7D9607" KeyPath="yes" Source="$(var.SourceDir)\inventory.csv" />
+            </Component>
+            <Component Id="cmpD6378BB4A98E57FC04B2864D7A698354" Directory="INSTALLFOLDER" Guid="{BC9C1644-4B52-41D4-B64E-C0715D6FE576}">
+                <File Id="filD646DAF66B55FE1F6C2BA067CB7104DB" KeyPath="yes" Source="$(var.SourceDir)\supabase.properties" />
+            </Component>
+            <Component Id="cmp3DAE182E97497FC9D4959442B10EF36D" Directory="INSTALLFOLDER" Guid="{57BB7D15-C03D-456C-BB34-E04DA6EE72D8}">
+                <File Id="fil41AFA06D1D7F4F33A5171F08D6C8867E" KeyPath="yes" Source="$(var.SourceDir)\users.csv" />
+            </Component>
+            <Component Id="cmp72BE9EB9F154375B3878BC511BAF2D49" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{7286576C-0615-49C8-B05A-DAC9C4C7D8DA}">
+                <File Id="filE73D98D0E7A77BBF153F94C19CC08797" KeyPath="yes" Source="$(var.SourceDir)\resources\additemIcon.png" />
+            </Component>
+            <Component Id="cmp105C84EA9211B50B886F46800EC2AAC9" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{AF49FEC6-8F9A-4248-962B-D0E255EC28E4}">
+                <File Id="fil1F7AB3C0B3144C9A57A73A56DF7B33D6" KeyPath="yes" Source="$(var.SourceDir)\resources\Background.png" />
+            </Component>
+            <Component Id="cmp50C288B4E3017ED54BBDF6FE08877D18" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{6C3EBDC8-CF94-426A-8FBC-5053711EDAA0}">
+                <File Id="fil96083138FC6F924BA2C7D0D029CF4887" KeyPath="yes" Source="$(var.SourceDir)\resources\clearIcon.png" />
+            </Component>
+            <Component Id="cmp811797D585FB3CEB37851AF2D7816796" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{33830DF8-C7D9-4CDF-8265-4DA78D6BD125}">
+                <File Id="filDAB6D7EB8D907821829F50AE01668C54" KeyPath="yes" Source="$(var.SourceDir)\resources\deleteitemIcon.png" />
+            </Component>
+            <Component Id="cmp1C60B24F22C9D035D903D7761EA98262" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{CB882B93-E758-4DD3-8EA7-29671BDC9032}">
+                <File Id="fil6DC8E2E2628D391E1418E3858578A250" KeyPath="yes" Source="$(var.SourceDir)\resources\generatereportIcon.png" />
+            </Component>
+            <Component Id="cmp5841D1825D41D9C29440E6D2551FCC30" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{19823745-BAD1-46C6-BB35-F5D89410B65E}">
+                <File Id="filFE1C8B97DB78F9C9C13AA83028E883E7" KeyPath="yes" Source="$(var.SourceDir)\resources\logoutIcon.png" />
+            </Component>
+            <Component Id="cmpA0D442740EE26CAD2A2512778AA8415A" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{421E6F42-0ECA-4ABF-BE63-746281F594D3}">
+                <File Id="fil3C119676036E1D4DA6807A442F29FA4E" KeyPath="yes" Source="$(var.SourceDir)\resources\myicon.png" />
+            </Component>
+            <Component Id="cmp46BDB8E557D1A8915E02AB1C985F6923" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{82B5BD73-D585-46B8-8A49-E568F343B937}">
+                <File Id="fil506ADFFFD9FC6349703D36C7F10080D4" KeyPath="yes" Source="$(var.SourceDir)\resources\myLogo.png" />
+            </Component>
+            <Component Id="cmpF00F347B9DBC6FED9D8D21DD5C7CE092" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{871963AE-0F2A-45E4-91F1-D7F44248E428}">
+                <File Id="filAC35944A2ECBD0EC3213A1C737CD98E4" KeyPath="yes" Source="$(var.SourceDir)\resources\orderIcon.png" />
+            </Component>
+            <Component Id="cmp5207EF0825EE5499EEDC46F80F484933" Directory="dir09903639A005C2D197EB19C866CDE8EB" Guid="{E8B5EA46-0FDB-4E48-AACF-1397AF8A9206}">
+                <File Id="fil0B7813D04C40C1B9ECCF2E620BDE2791" KeyPath="yes" Source="$(var.SourceDir)\resources\updateitemIcon.png" />
+            </Component>
+        </ComponentGroup>
+    </Fragment>
+</Wix>

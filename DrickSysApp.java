@@ -80,7 +80,10 @@ public class DrickSysApp extends JFrame {
         this.session = session;
 
         setTitle("Dricko's");
-        setIconImage(new ImageIcon("resources/myicon.png").getImage());
+        ImageIcon appIcon = loadResourceIcon("/resources/myicon.png");
+        if (appIcon != null) {
+            setIconImage(appIcon.getImage());
+        }
         setSize(400, 450);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setLocationRelativeTo(null);
@@ -214,6 +217,11 @@ public class DrickSysApp extends JFrame {
             }
             return cellComponent;
         }
+    }
+
+    private ImageIcon loadResourceIcon(String path) {
+        java.net.URL resource = getClass().getResource(path);
+        return resource != null ? new ImageIcon(resource) : null;
     }
 
 

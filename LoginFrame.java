@@ -21,7 +21,10 @@ public class LoginFrame extends JFrame {
 
     public LoginFrame() {
         setTitle("Login");
-        setIconImage(new ImageIcon("resources/myicon.png").getImage());
+        ImageIcon appIcon = loadResourceIcon("/resources/myicon.png");
+        if (appIcon != null) {
+            setIconImage(appIcon.getImage());
+        }
         setResizable(false);
         setSize(400, 450);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
@@ -37,7 +40,10 @@ public class LoginFrame extends JFrame {
             }
         });
 
-        setContentPane(new JLabel(new ImageIcon("resources/background.png")));
+        ImageIcon backgroundIcon = loadResourceIcon("/resources/Background.png");
+        if (backgroundIcon != null) {
+            setContentPane(new JLabel(backgroundIcon));
+        }
         setLayout(new BorderLayout());
 
         JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
@@ -109,6 +115,11 @@ public class LoginFrame extends JFrame {
         panel.add(label);
         panel.add(field);
         return panel;
+    }
+
+    private ImageIcon loadResourceIcon(String path) {
+        java.net.URL resource = getClass().getResource(path);
+        return resource != null ? new ImageIcon(resource) : null;
     }
 
     private JTextField createStyledTextField(String placeholder) {
@@ -233,8 +244,17 @@ public class LoginFrame extends JFrame {
             new DrickSysApp(this, supabaseClient, session).setVisible(true);
             dispose();
         } catch (IOException | InterruptedException ex) {
+            String message = ex.getMessage() == null ? "" : ex.getMessage();
+            String userMessage;
+            if (message.contains("(400)") || message.contains("(401)") || message.contains("(403)")) {
+                userMessage = "Login failed. Check email/password and Supabase Auth settings.\n\n"
+                        + message;
+            } else {
+                userMessage = "Login failed due to connection or configuration issue.\n\n"
+                        + message;
+            }
             JOptionPane.showMessageDialog(this,
-                    "Invalid email or password",
+                    userMessage,
                     "Login Failed",
                     JOptionPane.ERROR_MESSAGE);
         }

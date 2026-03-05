@@ -11,6 +11,15 @@ public class SupabaseSessionStore {
     private static final String KEY_REFRESH_TOKEN = "refresh_token";
     private static final String KEY_USER_ID = "user_id";
     private static final String KEY_EMAIL = "email";
+    private static final String APP_DIR_NAME = "DrickSys";
+
+    private Path resolveSessionFilePath() {
+        String appData = System.getenv("APPDATA");
+        if (appData != null && !appData.isBlank()) {
+            return Path.of(appData, APP_DIR_NAME, SESSION_FILE);
+        }
+        return Path.of(System.getProperty("user.home", "."), "." + APP_DIR_NAME, SESSION_FILE);
+    }
 
     public void save(SupabaseSession session) throws IOException {
         Properties properties = new Properties();
@@ -19,15 +28,21 @@ public class SupabaseSessionStore {
         properties.setProperty(KEY_USER_ID, session.getUserId());
         properties.setProperty(KEY_EMAIL, session.getEmail() == null ? "" : session.getEmail());
 
-        try (FileOutputStream outputStream = new FileOutputStream(SESSION_FILE)) {
+        Path sessionPath = resolveSessionFilePath();
+        Files.createDirectories(sessionPath.getParent());
+        try (FileOutputStream outputStream = new FileOutputStream(sessionPath.toFile())) {
             properties.store(outputStream, "Supabase Session");
         }
     }
 
     public SupabaseSession load() throws IOException {
         Properties properties = new Properties();
+        Path sessionPath = resolveSessionFilePath();
+        if (!Files.exists(sessionPath)) {
+            return null;
+        }
 
-        try (FileInputStream inputStream = new FileInputStream(SESSION_FILE)) {
+        try (FileInputStream inputStream = new FileInputStream(sessionPath.toFile())) {
             properties.load(inputStream);
         }
 
@@ -44,6 +59,6 @@ public class SupabaseSessionStore {
     }
 
     public void clear() throws IOException {
-        Files.deleteIfExists(Path.of(SESSION_FILE));
+        Files.deleteIfExists(resolveSessionFilePath());
     }
 }
