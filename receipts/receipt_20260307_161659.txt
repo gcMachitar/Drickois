@@ -1,0 +1,15 @@
+----- DrickSys Receipt -----
+Date: 2026-03-07 16:16:59
+------------------------------
+hi x1 @ PHP 67.00 = PHP 67.00
+Remaining Stock: 8
+67 x1 @ PHP 20.00 = PHP 20.00
+Remaining Stock: 10
+Natchos x32 @ PHP 120.00 = PHP 3840.00
+Remaining Stock: 1
+Zues x11 @ PHP 69.00 = PHP 759.00
+Remaining Stock: 9
+------------------------------
+Grand Total: PHP 4686.00
+------------------------------
+Thank you for your order!

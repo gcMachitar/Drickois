@@ -1,0 +1,124 @@
+Sale ID,Timestamp,Items,Units,Total,Details,Sync Status,Cloud Sale ID
+CLOUD-13,2026-03-07 00:00:00,"mark x1, Natchos x1, 67 x1, hi x1",4,307.0,"Sale ID: CLOUD-13
+Timestamp: 2026-03-07 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 13
+
+mark x1 @ PHP 100.00 = PHP 100.00
+Natchos x1 @ PHP 120.00 = PHP 120.00
+67 x1 @ PHP 20.00 = PHP 20.00
+hi x1 @ PHP 67.00 = PHP 67.00
+
+Units: 4
+Total: PHP 307.00",Cloud Imported,13
+CLOUD-12,2026-03-07 00:00:00,"Zues x11, Natchos x32, 67 x1, hi x1",45,4686.0,"Sale ID: CLOUD-12
+Timestamp: 2026-03-07 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 12
+
+Zues x11 @ PHP 69.00 = PHP 759.00
+Natchos x32 @ PHP 120.00 = PHP 3840.00
+67 x1 @ PHP 20.00 = PHP 20.00
+hi x1 @ PHP 67.00 = PHP 67.00
+
+Units: 45
+Total: PHP 4686.00",Cloud Imported,12
+CLOUD-11,2026-03-07 00:00:00,hi x1,1,67.0,"Sale ID: CLOUD-11
+Timestamp: 2026-03-07 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 11
+
+hi x1 @ PHP 67.00 = PHP 67.00
+
+Units: 1
+Total: PHP 67.00",Cloud Imported,11
+CLOUD-10,2026-03-05 00:00:00,67 x1,1,20.0,"Sale ID: CLOUD-10
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 10
+
+67 x1 @ PHP 20.00 = PHP 20.00
+
+Units: 1
+Total: PHP 20.00",Cloud Imported,10
+CLOUD-9,2026-03-05 00:00:00,Himalayan Coffe Bean x61,61,91500.0,"Sale ID: CLOUD-9
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 9
+
+Himalayan Coffe Bean x61 @ PHP 1500.00 = PHP 91500.00
+
+Units: 61
+Total: PHP 91500.00",Cloud Imported,9
+CLOUD-8,2026-03-05 00:00:00,Himalayan Coffe Bean x2,2,3000.0,"Sale ID: CLOUD-8
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 8
+
+Himalayan Coffe Bean x2 @ PHP 1500.00 = PHP 3000.00
+
+Units: 2
+Total: PHP 3000.00",Cloud Imported,8
+CLOUD-7,2026-03-05 00:00:00,Himalayan Coffe Bean x5,5,7500.0,"Sale ID: CLOUD-7
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 7
+
+Himalayan Coffe Bean x5 @ PHP 1500.00 = PHP 7500.00
+
+Units: 5
+Total: PHP 7500.00",Cloud Imported,7
+CLOUD-6,2026-03-05 00:00:00,mark x1,1,100.0,"Sale ID: CLOUD-6
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 6
+
+mark x1 @ PHP 100.00 = PHP 100.00
+
+Units: 1
+Total: PHP 100.00",Cloud Imported,6
+CLOUD-5,2026-03-05 00:00:00,Natchos x1,1,120.0,"Sale ID: CLOUD-5
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 5
+
+Natchos x1 @ PHP 120.00 = PHP 120.00
+
+Units: 1
+Total: PHP 120.00",Cloud Imported,5
+CLOUD-4,2026-03-05 00:00:00,Himalayan Coffe Bean x1,1,1500.0,"Sale ID: CLOUD-4
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 4
+
+Himalayan Coffe Bean x1 @ PHP 1500.00 = PHP 1500.00
+
+Units: 1
+Total: PHP 1500.00",Cloud Imported,4
+CLOUD-3,2026-03-05 00:00:00,Gian Granade x7,7,483.0,"Sale ID: CLOUD-3
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 3
+
+Gian Granade x7 @ PHP 69.00 = PHP 483.00
+
+Units: 7
+Total: PHP 483.00",Cloud Imported,3
+CLOUD-2,2026-03-05 00:00:00,Gian Granade x1,1,69.0,"Sale ID: CLOUD-2
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 2
+
+Gian Granade x1 @ PHP 69.00 = PHP 69.00
+
+Units: 1
+Total: PHP 69.00",Cloud Imported,2
+CLOUD-1,2026-03-05 00:00:00,Zues x100,100,6900.0,"Sale ID: CLOUD-1
+Timestamp: 2026-03-05 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 1
+
+Zues x100 @ PHP 69.00 = PHP 6900.00
+
+Units: 100
+Total: PHP 6900.00",Cloud Imported,1

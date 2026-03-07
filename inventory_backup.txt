@@ -1,6 +1,11 @@
 Inventory Text Backup
-Saved at: 2026-03-05 19:40:27
+Saved at: 2026-03-07 17:26:21
 ------------------------------------------------------------
 Item Name | Category | Quantity | Price (₱) | Date Added | Date Updated
 ------------------------------------------------------------
-mark | Coffee | 0 | 100.0 |  | 
+hi | Coffee | 7 | 67.0 |  | 
+67 | Other | 9 | 20.0 |  | 
+Natchos | Snacks | 0 | 120.0 |  | 
+Himalayan Coffe Bean | Other | 9 | 1500.0 |  | 
+Zues | Coffee | 9 | 69.0 |  | 
+mark | Coffee | 8 | 100.0 |  | 

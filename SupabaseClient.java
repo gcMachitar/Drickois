@@ -78,6 +78,42 @@ public class SupabaseClient {
         }
     }
 
+    public static class SaleItem {
+        private final String itemName;
+        private final String category;
+        private final int soldQuantity;
+        private final double unitPrice;
+        private final int remainingQuantity;
+
+        public SaleItem(String itemName, String category, int soldQuantity, double unitPrice, int remainingQuantity) {
+            this.itemName = itemName;
+            this.category = category;
+            this.soldQuantity = soldQuantity;
+            this.unitPrice = unitPrice;
+            this.remainingQuantity = remainingQuantity;
+        }
+
+        public String getItemName() {
+            return itemName;
+        }
+
+        public String getCategory() {
+            return category;
+        }
+
+        public int getSoldQuantity() {
+            return soldQuantity;
+        }
+
+        public double getUnitPrice() {
+            return unitPrice;
+        }
+
+        public int getRemainingQuantity() {
+            return remainingQuantity;
+        }
+    }
+
     public static class SupplierRecord {
         private final long supplierId;
         private final String supplierName;
@@ -123,6 +159,42 @@ public class SupabaseClient {
 
         public String getStatus() {
             return status;
+        }
+    }
+
+    public static class SaleHistoryLineRecord {
+        private final long saleId;
+        private final String saleDate;
+        private final String productName;
+        private final int quantity;
+        private final double price;
+
+        public SaleHistoryLineRecord(long saleId, String saleDate, String productName, int quantity, double price) {
+            this.saleId = saleId;
+            this.saleDate = saleDate;
+            this.productName = productName;
+            this.quantity = quantity;
+            this.price = price;
+        }
+
+        public long getSaleId() {
+            return saleId;
+        }
+
+        public String getSaleDate() {
+            return saleDate;
+        }
+
+        public String getProductName() {
+            return productName;
+        }
+
+        public int getQuantity() {
+            return quantity;
+        }
+
+        public double getPrice() {
+            return price;
         }
     }
 
@@ -404,6 +476,37 @@ public class SupabaseClient {
         );
     }
 
+    public long placeSale(SupabaseSession session, List<SaleItem> saleItems) throws IOException, InterruptedException {
+        if (saleItems == null || saleItems.isEmpty()) {
+            return -1;
+        }
+
+        long userId = ensureOperationalUser(session);
+        long saleId = insertSale(session, userId);
+
+        for (SaleItem saleItem : saleItems) {
+            long itemId = findItemIdByName(session, saleItem.getItemName());
+            if (itemId <= 0) {
+                throw new IOException("Item not found for sale: " + saleItem.getItemName());
+            }
+
+            long categoryId = ensureCategory(session, saleItem.getCategory());
+            long productId = ensureProductAndIngredient(session, saleItem.getItemName(), saleItem.getCategory(), categoryId, itemId);
+
+            insertSalesDetail(session, saleId, productId, saleItem.getSoldQuantity(), saleItem.getUnitPrice());
+
+            String updateStockBody = "{\"quantity_on_hand\":" + saleItem.getRemainingQuantity() + "}";
+            sendJsonRequest(
+                    "PATCH",
+                    "/rest/v1/item?item_id=eq." + itemId,
+                    updateStockBody,
+                    session.getAccessToken(),
+                    false
+            );
+        }
+        return saleId;
+    }
+
     public void logAction(SupabaseSession session, String actionType, String details) throws IOException, InterruptedException {
         // No action_logs table exists in the ERD, so this is intentionally a no-op.
     }
@@ -416,6 +519,12 @@ public class SupabaseClient {
         String path = "/rest/v1/supplier?select=supplier_id,supplier_name,contact_person,phone,email,address,status&order=supplier_id.desc";
         HttpResponse<String> response = sendJsonRequest("GET", path, null, session.getAccessToken(), false);
         return parseSupplierRecords(response.body());
+    }
+
+    public List<SaleHistoryLineRecord> fetchSalesHistory(SupabaseSession session) throws IOException, InterruptedException {
+        String path = "/rest/v1/sales_details?select=quantity,price,sales(sale_id,sale_date),product(product_name)&order=sale_detail_id.desc";
+        HttpResponse<String> response = sendJsonRequest("GET", path, null, session.getAccessToken(), false);
+        return parseSaleHistoryLineRecords(response.body());
     }
 
     public void addSupplier(
@@ -861,6 +970,15 @@ public class SupabaseClient {
         return null;
     }
 
+    private static String extractNestedJsonString(String jsonBody, String objectName, String fieldName) {
+        Pattern pattern = Pattern.compile("\"" + Pattern.quote(objectName) + "\"\\s*:\\s*\\{(.*?)\\}", Pattern.DOTALL);
+        Matcher matcher = pattern.matcher(jsonBody);
+        if (!matcher.find()) {
+            return null;
+        }
+        return extractJsonString(matcher.group(1), fieldName);
+    }
+
     private static String extractNestedUserId(String jsonBody) {
         Pattern pattern = Pattern.compile("\"user\"\\s*:\\s*\\{[^}]*\"id\"\\s*:\\s*\"([^\"]+)\"", Pattern.DOTALL);
         Matcher matcher = pattern.matcher(jsonBody);
@@ -952,6 +1070,20 @@ public class SupabaseClient {
                     defaultString(extractNestedItemName(objectJson)),
                     extractJsonInt(objectJson, "quantity"),
                     extractJsonDouble(objectJson, "cost")
+            ));
+        }
+        return records;
+    }
+
+    private static List<SaleHistoryLineRecord> parseSaleHistoryLineRecords(String json) {
+        List<SaleHistoryLineRecord> records = new ArrayList<>();
+        for (String objectJson : splitTopLevelObjects(json)) {
+            records.add(new SaleHistoryLineRecord(
+                    extractJsonLong(objectJson, "sale_id"),
+                    defaultString(extractNestedJsonString(objectJson, "sales", "sale_date")),
+                    defaultString(extractNestedJsonString(objectJson, "product", "product_name")),
+                    extractJsonInt(objectJson, "quantity"),
+                    extractJsonDouble(objectJson, "price")
             ));
         }
         return records;

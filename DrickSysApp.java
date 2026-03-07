@@ -4,7 +4,9 @@ import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -31,6 +33,18 @@ public class DrickSysApp extends JFrame {
     private JLabel statusBarLabel;
     private JLabel cloudStatusLabel;
     private JButton addButtonReference;
+    private JComboBox<String> posItemField;
+    private JSpinner posQuantitySpinner;
+    private DefaultTableModel cartTableModel;
+    private JTable cartTable;
+    private DefaultTableModel recentSalesTableModel;
+    private JTable recentSalesTable;
+    private JLabel cartItemsLabel;
+    private JLabel cartTotalLabel;
+    private JLabel salesCountLabel;
+    private JLabel unitsSoldLabel;
+    private JLabel revenueLabel;
+    private JPanel posPanel;
 
     private final LoginFrame loginFrame;
     private final SupabaseClient supabaseClient;
@@ -39,6 +53,9 @@ public class DrickSysApp extends JFrame {
     private final SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private static final String INVENTORY_FILE = "inventory.csv";
     private static final String INVENTORY_TEXT_BACKUP_FILE = "inventory_backup.txt";
+    private static final String SALES_HISTORY_FILE = "sales_history.csv";
+    private static final String SALES_TEXT_BACKUP_FILE = "sales_backup.txt";
+    private static final String ACTIVITY_LOG_FILE = "activity_logs.csv";
     private static final String RECEIPTS_DIR = "receipts";
     private static final String DEFAULT_ITEM_NAME_PLACEHOLDER = "e.g., Cafe Latte";
     private static final String DEFAULT_QUANTITY_PLACEHOLDER = "e.g., 25";
@@ -66,8 +83,53 @@ public class DrickSysApp extends JFrame {
     private final int LOW_STOCK_THRESHOLD = 10;
 
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
+    private final List<SaleSummary> recentSales = new ArrayList<>();
+    private final List<SaleSummary> salesHistory = new ArrayList<>();
     private boolean cloudConnected;
     private boolean cloudDisconnectDialogShown;
+    private int sessionSalesCount;
+    private int sessionUnitsSold;
+    private double sessionRevenue;
+
+    private static final class CartLine {
+        private final String itemName;
+        private final String category;
+        private final int quantity;
+        private final double unitPrice;
+
+        private CartLine(String itemName, String category, int quantity, double unitPrice) {
+            this.itemName = itemName;
+            this.category = category;
+            this.quantity = quantity;
+            this.unitPrice = unitPrice;
+        }
+
+        private double subtotal() {
+            return quantity * unitPrice;
+        }
+    }
+
+    private static final class SaleSummary {
+        private final String saleId;
+        private final String timestamp;
+        private final String items;
+        private final int units;
+        private final double total;
+        private final String details;
+        private final String syncStatus;
+        private final String cloudSaleId;
+
+        private SaleSummary(String saleId, String timestamp, String items, int units, double total, String details, String syncStatus, String cloudSaleId) {
+            this.saleId = saleId;
+            this.timestamp = timestamp;
+            this.items = items;
+            this.units = units;
+            this.total = total;
+            this.details = details;
+            this.syncStatus = syncStatus;
+            this.cloudSaleId = cloudSaleId;
+        }
+    }
 
 
     public DrickSysApp() {
@@ -87,7 +149,7 @@ public class DrickSysApp extends JFrame {
         setSize(400, 450);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setLocationRelativeTo(null);
-        setSize(850, 950);
+        setSize(1220, 900);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setLocationRelativeTo(null);
 
@@ -104,6 +166,8 @@ public class DrickSysApp extends JFrame {
 
         initializeTable();
 
+        initializePosModels();
+
         JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
         mainPanel.setBackground(SECONDARY_COLOR);
         mainPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
@@ -111,6 +175,8 @@ public class DrickSysApp extends JFrame {
         JPanel centerContentPanel = new JPanel();
         centerContentPanel.setLayout(new BoxLayout(centerContentPanel, BoxLayout.Y_AXIS));
         centerContentPanel.setBackground(SECONDARY_COLOR);
+        centerContentPanel.add(createDashboardPanel());
+        centerContentPanel.add(Box.createRigidArea(new Dimension(0, 10)));
         centerContentPanel.add(createInputPanel());
         centerContentPanel.add(Box.createRigidArea(new Dimension(0, 10)));
         centerContentPanel.add(createSearchAndTablePanel());
@@ -119,6 +185,7 @@ public class DrickSysApp extends JFrame {
 
         mainPanel.add(centerContentPanel, BorderLayout.CENTER);
         mainPanel.add(createSidebarPanel(), BorderLayout.WEST);
+        mainPanel.add(createPosPanel(), BorderLayout.EAST);
 
         add(mainPanel);
 
@@ -127,8 +194,12 @@ public class DrickSysApp extends JFrame {
         setupSearch();
 
         loadInventory();
+        loadSalesHistory();
         updateTotalQuantity();
         setupTableColumns();
+        refreshPosItemChoices();
+        updateCartSummary();
+        updateSalesSummary();
 
         SwingUtilities.invokeLater(() -> {
             if (addButtonReference != null) {
@@ -179,6 +250,236 @@ public class DrickSysApp extends JFrame {
         inventoryTable.getColumnModel().getColumn(3).setCellRenderer(centerRenderer);
         inventoryTable.getColumnModel().getColumn(4).setCellRenderer(centerRenderer);
         inventoryTable.getColumnModel().getColumn(5).setCellRenderer(centerRenderer);
+    }
+
+    private void initializePosModels() {
+        cartTableModel = new DefaultTableModel(new String[]{"Item", "Qty", "Price", "Subtotal"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+
+            @Override
+            public Class<?> getColumnClass(int column) {
+                return switch (column) {
+                    case 1 -> Integer.class;
+                    case 2, 3 -> Double.class;
+                    default -> String.class;
+                };
+            }
+        };
+
+        recentSalesTableModel = new DefaultTableModel(new String[]{"Sale ID", "Time", "Items", "Units", "Total"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+
+            @Override
+            public Class<?> getColumnClass(int column) {
+                return switch (column) {
+                    case 2 -> Integer.class;
+                    case 3 -> Double.class;
+                    default -> String.class;
+                };
+            }
+        };
+    }
+
+    private JPanel createDashboardPanel() {
+        JPanel panel = new JPanel(new GridLayout(1, 4, 10, 0));
+        panel.setBackground(SECONDARY_COLOR);
+
+        totalQuantityLabel = createMetricLabel("Stock On Hand", "0");
+        salesCountLabel = createMetricLabel("Sales This Session", "0");
+        unitsSoldLabel = createMetricLabel("Units Sold", "0");
+        revenueLabel = createMetricLabel("Revenue", "PHP 0.00");
+
+        panel.add(wrapMetricCard("Stock On Hand", totalQuantityLabel));
+        panel.add(wrapMetricCard("Sales This Session", salesCountLabel));
+        panel.add(wrapMetricCard("Units Sold", unitsSoldLabel));
+        panel.add(wrapMetricCard("Revenue", revenueLabel));
+        return panel;
+    }
+
+    private JLabel createMetricLabel(String title, String value) {
+        JLabel label = new JLabel(value);
+        label.setName(title);
+        label.setFont(HEADER_FONT.deriveFont(Font.BOLD, 18f));
+        label.setForeground(TEXT_COLOR.darker());
+        return label;
+    }
+
+    private JPanel wrapMetricCard(String title, JLabel valueLabel) {
+        JPanel card = new JPanel(new BorderLayout(4, 4));
+        card.setBackground(Color.WHITE);
+        card.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR, 2),
+                BorderFactory.createEmptyBorder(12, 12, 12, 12)
+        ));
+
+        JLabel titleLabel = new JLabel(title);
+        titleLabel.setFont(MAIN_FONT.deriveFont(Font.BOLD));
+        titleLabel.setForeground(TEXT_COLOR);
+        card.add(titleLabel, BorderLayout.NORTH);
+        card.add(valueLabel, BorderLayout.CENTER);
+        return card;
+    }
+
+    private JPanel createPosPanel() {
+        posPanel = new JPanel(new BorderLayout(8, 8));
+        posPanel.setPreferredSize(new Dimension(340, 0));
+        posPanel.setBackground(SECONDARY_COLOR);
+        posPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR, 2),
+                BorderFactory.createEmptyBorder(12, 12, 12, 12)
+        ));
+
+        JPanel header = new JPanel(new GridLayout(0, 1, 0, 4));
+        header.setBackground(SECONDARY_COLOR);
+        JLabel title = new JLabel("POS Checkout");
+        title.setFont(HEADER_FONT.deriveFont(Font.BOLD, 18f));
+        title.setForeground(TEXT_COLOR);
+        JLabel subtitle = new JLabel("Build one sale with multiple items.");
+        subtitle.setFont(MAIN_FONT);
+        subtitle.setForeground(TEXT_COLOR.darker());
+        header.add(title);
+        header.add(subtitle);
+
+        JPanel entryPanel = new JPanel(new GridBagLayout());
+        entryPanel.setBackground(SECONDARY_COLOR);
+        entryPanel.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR),
+                "Add To Cart",
+                TitledBorder.LEFT,
+                TitledBorder.TOP,
+                HEADER_FONT,
+                TEXT_COLOR
+        ));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 4, 4, 4);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+
+        posItemField = new JComboBox<>();
+        posItemField.setFont(MAIN_FONT);
+        posQuantitySpinner = new JSpinner(new SpinnerNumberModel(1, 1, 9999, 1));
+        posQuantitySpinner.setFont(MAIN_FONT);
+        JButton addToCartButton = createDialogActionButton("Add To Cart");
+        addToCartButton.addActionListener(this::handleAddToCartAction);
+
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        entryPanel.add(new JLabel("Item"), gbc);
+        gbc.gridy = 1;
+        entryPanel.add(posItemField, gbc);
+        gbc.gridy = 2;
+        entryPanel.add(new JLabel("Quantity"), gbc);
+        gbc.gridy = 3;
+        entryPanel.add(posQuantitySpinner, gbc);
+        gbc.gridy = 4;
+        entryPanel.add(addToCartButton, gbc);
+
+        JPanel top = new JPanel(new BorderLayout(8, 8));
+        top.setBackground(SECONDARY_COLOR);
+        top.add(header, BorderLayout.NORTH);
+        top.add(entryPanel, BorderLayout.CENTER);
+
+        cartTable = createWorkspaceTable(cartTableModel);
+        cartTable.setRowHeight(26);
+        JScrollPane cartScrollPane = new JScrollPane(cartTable);
+        cartScrollPane.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR),
+                "Current Sale",
+                TitledBorder.LEFT,
+                TitledBorder.TOP,
+                HEADER_FONT,
+                TEXT_COLOR
+        ));
+
+        cartItemsLabel = new JLabel("Lines: 0");
+        cartItemsLabel.setFont(MAIN_FONT.deriveFont(Font.BOLD));
+        cartItemsLabel.setForeground(TEXT_COLOR);
+        cartTotalLabel = new JLabel("Total: PHP 0.00");
+        cartTotalLabel.setFont(HEADER_FONT.deriveFont(Font.BOLD, 16f));
+        cartTotalLabel.setForeground(TEXT_COLOR.darker());
+
+        JPanel cartFooter = new JPanel(new GridLayout(0, 1, 0, 4));
+        cartFooter.setBackground(SECONDARY_COLOR);
+        cartFooter.add(cartItemsLabel);
+        cartFooter.add(cartTotalLabel);
+
+        JButton removeLineButton = createDialogActionButton("Remove Line");
+        removeLineButton.addActionListener(this::handleRemoveSelectedCartLineAction);
+        JButton clearCartButton = createDialogActionButton("Clear Cart");
+        clearCartButton.addActionListener(this::handleClearCartAction);
+        JButton checkoutButton = createPrimaryActionButton("Checkout Sale");
+        setButtonIcon(checkoutButton, "/resources/orderIcon.png", 18);
+        checkoutButton.addActionListener(this::handleCheckoutCartAction);
+
+        checkoutButton.setFont(HEADER_FONT.deriveFont(Font.BOLD));
+
+        JPanel secondaryActions = new JPanel(new GridLayout(1, 2, 6, 0));
+        secondaryActions.setBackground(SECONDARY_COLOR);
+        secondaryActions.add(removeLineButton);
+        secondaryActions.add(clearCartButton);
+
+        JPanel cartActions = new JPanel(new BorderLayout(0, 6));
+        cartActions.setBackground(SECONDARY_COLOR);
+        cartActions.add(secondaryActions, BorderLayout.NORTH);
+        cartActions.add(checkoutButton, BorderLayout.SOUTH);
+
+        JPanel cartSection = new JPanel(new BorderLayout(8, 8));
+        cartSection.setBackground(SECONDARY_COLOR);
+        cartSection.add(cartScrollPane, BorderLayout.CENTER);
+        cartSection.add(cartFooter, BorderLayout.NORTH);
+        cartSection.add(cartActions, BorderLayout.SOUTH);
+
+        recentSalesTable = createWorkspaceTable(recentSalesTableModel);
+        recentSalesTable.setRowHeight(24);
+        recentSalesTable.setToolTipText("Click a sale to view its details. Press Enter to open.");
+        recentSalesTable.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "openSaleDetails");
+        recentSalesTable.getActionMap().put("openSaleDetails", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent event) {
+                showSelectedRecentSaleDetails();
+            }
+        });
+        JScrollPane salesScrollPane = new JScrollPane(recentSalesTable);
+        salesScrollPane.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR),
+                "Recent Sales",
+                TitledBorder.LEFT,
+                TitledBorder.TOP,
+                HEADER_FONT,
+                TEXT_COLOR
+        ));
+        salesScrollPane.setPreferredSize(new Dimension(0, 190));
+        recentSalesTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                handleRecentSaleTableClick(event);
+            }
+        });
+
+        JLabel recentSalesHint = new JLabel("Tip: click a sale or press Enter to inspect it.");
+        recentSalesHint.setFont(MAIN_FONT.deriveFont(Font.ITALIC, 11f));
+        recentSalesHint.setForeground(TEXT_COLOR.darker());
+
+        JPanel body = new JPanel(new BorderLayout(8, 8));
+        body.setBackground(SECONDARY_COLOR);
+        body.add(cartSection, BorderLayout.CENTER);
+        JPanel recentSalesSection = new JPanel(new BorderLayout(0, 4));
+        recentSalesSection.setBackground(SECONDARY_COLOR);
+        recentSalesSection.add(recentSalesHint, BorderLayout.NORTH);
+        recentSalesSection.add(salesScrollPane, BorderLayout.CENTER);
+        body.add(recentSalesSection, BorderLayout.SOUTH);
+
+        posPanel.add(top, BorderLayout.NORTH);
+        posPanel.add(body, BorderLayout.CENTER);
+        return posPanel;
     }
 
     private class LowQuantityRenderer extends DefaultTableCellRenderer {
@@ -361,10 +662,10 @@ public class DrickSysApp extends JFrame {
                 BorderFactory.createEmptyBorder(10, 15, 10, 15)
         ));
 
-        totalQuantityLabel = new JLabel("Total Items: 0");
-        totalQuantityLabel.setFont(HEADER_FONT.deriveFont(Font.BOLD, 16f));
-        totalQuantityLabel.setForeground(TEXT_COLOR);
-        panel.add(totalQuantityLabel, BorderLayout.WEST);
+        JLabel statusLabel = new JLabel("Inventory and POS ready");
+        statusLabel.setFont(HEADER_FONT.deriveFont(Font.BOLD, 16f));
+        statusLabel.setForeground(TEXT_COLOR);
+        panel.add(statusLabel, BorderLayout.WEST);
 
         cloudStatusLabel = new JLabel();
         cloudStatusLabel.setFont(MAIN_FONT.deriveFont(Font.BOLD));
@@ -459,11 +760,6 @@ public class DrickSysApp extends JFrame {
         sidebar.setBackground(PRIMARY_COLOR);
         sidebar.setBorder(BorderFactory.createEmptyBorder(10, 5, 10, 5));
         sidebar.setPreferredSize(new Dimension(80, getHeight()));
-
-        JButton orderButton = createSidebarButton("/resources/orderIcon.png", ORDER_ITEM_TEXT);
-        orderButton.addActionListener(this::handleShowOrderDialogAction);
-        sidebar.add(orderButton);
-        sidebar.add(Box.createVerticalStrut(10));
 
         JButton logsButton = createSidebarButton("/resources/generatereportIcon.png", ACTIVITY_LOGS_TEXT);
         logsButton.addActionListener(this::handleShowActivityLogsAction);
@@ -586,6 +882,258 @@ public class DrickSysApp extends JFrame {
         return button;
     }
 
+    private JButton createPrimaryActionButton(String text) {
+        JButton button = createDialogActionButton(text);
+        button.setBackground(PRIMARY_COLOR.darker());
+        button.setForeground(Color.WHITE);
+        button.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR.darker(), 2),
+                BorderFactory.createEmptyBorder(10, 14, 10, 14)
+        ));
+        return button;
+    }
+
+    private void setButtonIcon(JButton button, String iconPath, int size) {
+        ImageIcon icon = loadResourceIcon(iconPath);
+        if (icon == null) {
+            return;
+        }
+        Image scaledImage = icon.getImage().getScaledInstance(size, size, Image.SCALE_SMOOTH);
+        button.setIcon(new ImageIcon(scaledImage));
+        button.setHorizontalTextPosition(SwingConstants.RIGHT);
+        button.setVerticalTextPosition(SwingConstants.CENTER);
+        button.setIconTextGap(6);
+    }
+
+    private void refreshPosItemChoices() {
+        if (posItemField == null) {
+            return;
+        }
+        Object selected = posItemField.getSelectedItem();
+        posItemField.removeAllItems();
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            posItemField.addItem(String.valueOf(tableModel.getValueAt(i, 0)));
+        }
+        if (selected != null) {
+            posItemField.setSelectedItem(selected);
+        }
+        if (posItemField.getSelectedIndex() == -1 && posItemField.getItemCount() > 0) {
+            posItemField.setSelectedIndex(0);
+        }
+    }
+
+    private int findInventoryRowByName(String itemName) {
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            if (String.valueOf(tableModel.getValueAt(i, 0)).equalsIgnoreCase(itemName)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int getQuantityReservedInCart(String itemName) {
+        int reserved = 0;
+        for (int i = 0; i < cartTableModel.getRowCount(); i++) {
+            if (String.valueOf(cartTableModel.getValueAt(i, 0)).equalsIgnoreCase(itemName)) {
+                reserved += ((Number) cartTableModel.getValueAt(i, 1)).intValue();
+            }
+        }
+        return reserved;
+    }
+
+    private void addSelectedItemToCart() {
+        if (posItemField == null || posItemField.getItemCount() == 0) {
+            JOptionPane.showMessageDialog(this, "No inventory items are available for checkout.", "POS", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String itemName = String.valueOf(posItemField.getSelectedItem());
+        int quantity = ((Number) posQuantitySpinner.getValue()).intValue();
+        int inventoryRow = findInventoryRowByName(itemName);
+        if (inventoryRow < 0) {
+            JOptionPane.showMessageDialog(this, "Selected item was not found in inventory.", "POS", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        int available = ((Number) tableModel.getValueAt(inventoryRow, 2)).intValue() - getQuantityReservedInCart(itemName);
+        if (quantity > available) {
+            JOptionPane.showMessageDialog(this, "Only " + Math.max(available, 0) + " unit(s) are still available for this sale.", "Insufficient Stock", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        double price = ((Number) tableModel.getValueAt(inventoryRow, 3)).doubleValue();
+        cartTableModel.addRow(new Object[]{itemName, quantity, price, quantity * price});
+        updateCartSummary();
+        updateStatusBar("Added " + quantity + " x " + itemName + " to the current sale.", PRIMARY_COLOR.darker());
+        posQuantitySpinner.setValue(1);
+    }
+
+    private void handleAddToCartAction(ActionEvent event) {
+        addSelectedItemToCart();
+    }
+
+    private void removeSelectedCartLine() {
+        int selectedRow = cartTable.getSelectedRow();
+        if (selectedRow == -1) {
+            JOptionPane.showMessageDialog(this, "Select a cart line to remove.", "POS", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        cartTableModel.removeRow(selectedRow);
+        updateCartSummary();
+        updateStatusBar("Cart line removed.", TEXT_COLOR);
+    }
+
+    private void handleRemoveSelectedCartLineAction(ActionEvent event) {
+        removeSelectedCartLine();
+    }
+
+    private void clearCart() {
+        cartTableModel.setRowCount(0);
+        updateCartSummary();
+        updateStatusBar("Current sale cleared.", TEXT_COLOR);
+    }
+
+    private void handleClearCartAction(ActionEvent event) {
+        clearCart();
+    }
+
+    private List<CartLine> buildCartLines() {
+        Map<String, CartLine> merged = new LinkedHashMap<>();
+        for (int i = 0; i < cartTableModel.getRowCount(); i++) {
+            String itemName = String.valueOf(cartTableModel.getValueAt(i, 0));
+            int inventoryRow = findInventoryRowByName(itemName);
+            if (inventoryRow < 0) {
+                continue;
+            }
+            int quantity = ((Number) cartTableModel.getValueAt(i, 1)).intValue();
+            double unitPrice = ((Number) cartTableModel.getValueAt(i, 2)).doubleValue();
+            String category = String.valueOf(tableModel.getValueAt(inventoryRow, 1));
+            CartLine existing = merged.get(itemName);
+            if (existing == null) {
+                merged.put(itemName, new CartLine(itemName, category, quantity, unitPrice));
+            } else {
+                merged.put(itemName, new CartLine(itemName, category, existing.quantity + quantity, unitPrice));
+            }
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    private void updateCartSummary() {
+        if (cartItemsLabel == null || cartTotalLabel == null) {
+            return;
+        }
+        int lines = cartTableModel.getRowCount();
+        int units = 0;
+        double total = 0;
+        for (int i = 0; i < lines; i++) {
+            units += ((Number) cartTableModel.getValueAt(i, 1)).intValue();
+            total += ((Number) cartTableModel.getValueAt(i, 3)).doubleValue();
+        }
+        cartItemsLabel.setText("Lines: " + lines + " | Units: " + units);
+        cartTotalLabel.setText("Total: PHP " + String.format("%.2f", total));
+    }
+
+    private void updateSalesSummary() {
+        if (salesCountLabel != null) {
+            salesCountLabel.setText(String.valueOf(sessionSalesCount));
+        }
+        if (unitsSoldLabel != null) {
+            unitsSoldLabel.setText(String.valueOf(sessionUnitsSold));
+        }
+        if (revenueLabel != null) {
+            revenueLabel.setText("PHP " + String.format("%.2f", sessionRevenue));
+        }
+    }
+
+    private void addRecentSale(SaleSummary summary) {
+        salesHistory.add(0, summary);
+        recentSales.clear();
+        for (int i = 0; i < Math.min(8, salesHistory.size()); i++) {
+            recentSales.add(salesHistory.get(i));
+        }
+        recentSalesTableModel.setRowCount(0);
+        for (SaleSummary sale : recentSales) {
+            recentSalesTableModel.addRow(new Object[]{sale.saleId, sale.timestamp, sale.items, sale.units, sale.total});
+        }
+        recalculateDailySalesSummary();
+    }
+
+    private void handleRecentSaleTableClick(MouseEvent event) {
+        if (event.getButton() != MouseEvent.BUTTON1 || event.getClickCount() != 1) {
+            return;
+        }
+        showSelectedRecentSaleDetails();
+    }
+
+    private void showSelectedRecentSaleDetails() {
+        if (recentSalesTable == null) {
+            return;
+        }
+        int selectedRow = recentSalesTable.getSelectedRow();
+        if (selectedRow < 0) {
+            return;
+        }
+        int modelRow = recentSalesTable.convertRowIndexToModel(selectedRow);
+        if (modelRow < 0 || modelRow >= recentSales.size()) {
+            return;
+        }
+
+        SaleSummary sale = recentSales.get(modelRow);
+        JPanel panel = new JPanel(new BorderLayout(10, 10));
+        panel.setBackground(SECONDARY_COLOR);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR, 2),
+                BorderFactory.createEmptyBorder(12, 12, 12, 12)
+        ));
+
+        JPanel header = new JPanel(new BorderLayout(8, 8));
+        header.setOpaque(false);
+        JLabel iconLabel = new JLabel();
+        ImageIcon icon = loadResourceIcon("/resources/orderIcon.png");
+        if (icon != null) {
+            Image scaled = icon.getImage().getScaledInstance(28, 28, Image.SCALE_SMOOTH);
+            iconLabel.setIcon(new ImageIcon(scaled));
+        }
+        JLabel titleLabel = new JLabel("Sale " + sale.saleId);
+        titleLabel.setFont(HEADER_FONT.deriveFont(Font.BOLD, 18f));
+        titleLabel.setForeground(TEXT_COLOR.darker());
+
+        JLabel metaLabel = new JLabel(sale.timestamp + "  |  " + sale.syncStatus + (sale.cloudSaleId.isBlank() ? "" : "  |  Cloud #" + sale.cloudSaleId));
+        metaLabel.setFont(MAIN_FONT.deriveFont(Font.BOLD));
+        metaLabel.setForeground(TEXT_COLOR);
+
+        JPanel titleBlock = new JPanel(new GridLayout(0, 1));
+        titleBlock.setOpaque(false);
+        titleBlock.add(titleLabel);
+        titleBlock.add(metaLabel);
+        header.add(iconLabel, BorderLayout.WEST);
+        header.add(titleBlock, BorderLayout.CENTER);
+
+        JTextArea detailsArea = new JTextArea(sale.details);
+        detailsArea.setEditable(false);
+        detailsArea.setFont(new Font("Consolas", Font.PLAIN, 12));
+        detailsArea.setLineWrap(true);
+        detailsArea.setWrapStyleWord(true);
+        detailsArea.setBackground(new Color(250, 252, 245));
+        detailsArea.setForeground(TEXT_COLOR.darker());
+        detailsArea.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+
+        JScrollPane scrollPane = new JScrollPane(detailsArea);
+        scrollPane.setPreferredSize(new Dimension(420, 220));
+        scrollPane.setBorder(BorderFactory.createLineBorder(BORDER_COLOR));
+        scrollPane.getViewport().setBackground(detailsArea.getBackground());
+
+        panel.add(header, BorderLayout.NORTH);
+        panel.add(scrollPane, BorderLayout.CENTER);
+
+        JOptionPane.showMessageDialog(
+                this,
+                panel,
+                "Sale Details",
+                JOptionPane.INFORMATION_MESSAGE
+        );
+    }
+
     @FunctionalInterface
     private interface CloudOperation {
         void run() throws IOException, InterruptedException;
@@ -660,6 +1208,270 @@ public class DrickSysApp extends JFrame {
         return values;
     }
 
+    private String generateSaleId() {
+        return "DS-" + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS").format(new Date());
+    }
+
+    private boolean isSaleInCurrentDay(SaleSummary sale) {
+        String today = new SimpleDateFormat("yyyy-MM-dd").format(new Date());
+        return sale.timestamp != null && sale.timestamp.startsWith(today);
+    }
+
+    private void recalculateDailySalesSummary() {
+        sessionSalesCount = 0;
+        sessionUnitsSold = 0;
+        sessionRevenue = 0;
+
+        for (SaleSummary sale : salesHistory) {
+            if (!isSaleInCurrentDay(sale)) {
+                continue;
+            }
+            sessionSalesCount++;
+            sessionUnitsSold += sale.units;
+            sessionRevenue += sale.total;
+        }
+        updateSalesSummary();
+    }
+
+    private List<SupabaseClient.ActionLogRecord> loadLocalActionLogs() {
+        List<SupabaseClient.ActionLogRecord> logs = new ArrayList<>();
+        File file = new File(ACTIVITY_LOG_FILE);
+        if (!file.exists()) {
+            return logs;
+        }
+
+        try (Scanner scanner = new Scanner(file)) {
+            if (scanner.hasNextLine()) {
+                scanner.nextLine();
+            }
+            while (scanner.hasNextLine()) {
+                List<String> parts = parseCsvLine(scanner.nextLine());
+                if (parts.size() < 3) {
+                    continue;
+                }
+                logs.add(new SupabaseClient.ActionLogRecord(parts.get(1), parts.get(2), parts.get(0)));
+            }
+        } catch (FileNotFoundException e) {
+            LOGGER.log(Level.WARNING, "Activity log file not found during load", e);
+        }
+        return logs;
+    }
+
+    private void appendLocalActionLog(String actionType, String details) {
+        File file = new File(ACTIVITY_LOG_FILE);
+        boolean writeHeader = !file.exists();
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(file, true))) {
+            if (writeHeader) {
+                writer.write("Timestamp,Action,Details");
+                writer.newLine();
+            }
+            writer.write(csvEscape(dateFormatter.format(new Date())));
+            writer.write(",");
+            writer.write(csvEscape(actionType));
+            writer.write(",");
+            writer.write(csvEscape(details));
+            writer.newLine();
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed writing local activity log", e);
+        }
+    }
+
+    private void loadSalesHistory() {
+        salesHistory.clear();
+        recentSales.clear();
+
+        File file = new File(SALES_HISTORY_FILE);
+        if (!file.exists()) {
+            recentSalesTableModel.setRowCount(0);
+            recalculateDailySalesSummary();
+            return;
+        }
+
+        try (Scanner scanner = new Scanner(file)) {
+            if (scanner.hasNextLine()) {
+                scanner.nextLine();
+            }
+            while (scanner.hasNextLine()) {
+                List<String> parts = parseCsvLine(scanner.nextLine());
+                if (parts.size() < 8) {
+                    continue;
+                }
+                try {
+                    salesHistory.add(new SaleSummary(
+                            parts.get(0),
+                            parts.get(1),
+                            parts.get(2),
+                            Integer.parseInt(parts.get(3)),
+                            Double.parseDouble(parts.get(4)),
+                            parts.get(5),
+                            parts.get(6),
+                            parts.get(7)
+                    ));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        } catch (FileNotFoundException e) {
+            LOGGER.log(Level.WARNING, "Sales history file not found during load", e);
+        }
+
+        for (int i = 0; i < Math.min(8, salesHistory.size()); i++) {
+            recentSales.add(salesHistory.get(i));
+        }
+        recentSalesTableModel.setRowCount(0);
+        for (SaleSummary sale : recentSales) {
+            recentSalesTableModel.addRow(new Object[]{sale.saleId, sale.timestamp, sale.items, sale.units, sale.total});
+        }
+        mergeCloudSalesHistory();
+        recalculateDailySalesSummary();
+    }
+
+    private void mergeCloudSalesHistory() {
+        if (!isCloudConfigured() || supabaseClient == null || session == null) {
+            return;
+        }
+
+        try {
+            Map<Long, List<SupabaseClient.SaleHistoryLineRecord>> groupedLines = new LinkedHashMap<>();
+            for (SupabaseClient.SaleHistoryLineRecord line : supabaseClient.fetchSalesHistory(session)) {
+                if (line.getSaleId() <= 0) {
+                    continue;
+                }
+                groupedLines.computeIfAbsent(line.getSaleId(), ignored -> new ArrayList<>()).add(line);
+            }
+
+            boolean changed = false;
+            for (Map.Entry<Long, List<SupabaseClient.SaleHistoryLineRecord>> entry : groupedLines.entrySet()) {
+                String cloudSaleId = String.valueOf(entry.getKey());
+                boolean exists = false;
+                for (SaleSummary existing : salesHistory) {
+                    if (cloudSaleId.equals(existing.cloudSaleId)) {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (exists) {
+                    continue;
+                }
+
+                SaleSummary imported = buildSaleSummaryFromCloud(cloudSaleId, entry.getValue());
+                if (imported != null) {
+                    salesHistory.add(imported);
+                    changed = true;
+                }
+            }
+
+            if (changed) {
+                salesHistory.sort((left, right) -> right.timestamp.compareTo(left.timestamp));
+                recentSales.clear();
+                for (int i = 0; i < Math.min(8, salesHistory.size()); i++) {
+                    recentSales.add(salesHistory.get(i));
+                }
+                recentSalesTableModel.setRowCount(0);
+                for (SaleSummary sale : recentSales) {
+                    recentSalesTableModel.addRow(new Object[]{sale.saleId, sale.timestamp, sale.items, sale.units, sale.total});
+                }
+                saveSalesHistory();
+            }
+        } catch (IOException | InterruptedException e) {
+            cloudConnected = false;
+            updateCloudStatusIndicator();
+        }
+    }
+
+    private SaleSummary buildSaleSummaryFromCloud(String cloudSaleId, List<SupabaseClient.SaleHistoryLineRecord> lines) {
+        if (lines == null || lines.isEmpty()) {
+            return null;
+        }
+
+        String timestamp = lines.get(0).getSaleDate();
+        if (timestamp == null || timestamp.isBlank()) {
+            timestamp = dateFormatter.format(new Date());
+        } else if (timestamp.length() == 10) {
+            timestamp = timestamp + " 00:00:00";
+        }
+
+        int totalUnits = 0;
+        double grandTotal = 0;
+        StringBuilder itemsSummary = new StringBuilder();
+        StringBuilder details = new StringBuilder();
+        for (int i = 0; i < lines.size(); i++) {
+            SupabaseClient.SaleHistoryLineRecord line = lines.get(i);
+            double subtotal = line.getQuantity() * line.getPrice();
+            totalUnits += line.getQuantity();
+            grandTotal += subtotal;
+            if (i > 0) {
+                itemsSummary.append(", ");
+            }
+            itemsSummary.append(line.getProductName()).append(" x").append(line.getQuantity());
+            details.append(line.getProductName())
+                    .append(" x").append(line.getQuantity())
+                    .append(" @ PHP ").append(String.format("%.2f", line.getPrice()))
+                    .append(" = PHP ").append(String.format("%.2f", subtotal))
+                    .append("\n");
+        }
+
+        String saleId = "CLOUD-" + cloudSaleId;
+        String fullDetails = "Sale ID: " + saleId
+                + "\nTimestamp: " + timestamp
+                + "\nSync: Cloud Imported"
+                + "\nCloud Sale ID: " + cloudSaleId
+                + "\n\n" + details
+                + "\nUnits: " + totalUnits
+                + "\nTotal: PHP " + String.format("%.2f", grandTotal);
+        return new SaleSummary(saleId, timestamp, itemsSummary.toString(), totalUnits, grandTotal, fullDetails, "Cloud Imported", cloudSaleId);
+    }
+
+    private void saveSalesHistory() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(SALES_HISTORY_FILE))) {
+            writer.write("Sale ID,Timestamp,Items,Units,Total,Details,Sync Status,Cloud Sale ID");
+            writer.newLine();
+            for (SaleSummary sale : salesHistory) {
+                writer.write(csvEscape(sale.saleId));
+                writer.write(",");
+                writer.write(csvEscape(sale.timestamp));
+                writer.write(",");
+                writer.write(csvEscape(sale.items));
+                writer.write(",");
+                writer.write(csvEscape(sale.units));
+                writer.write(",");
+                writer.write(csvEscape(sale.total));
+                writer.write(",");
+                writer.write(csvEscape(sale.details));
+                writer.write(",");
+                writer.write(csvEscape(sale.syncStatus));
+                writer.write(",");
+                writer.write(csvEscape(sale.cloudSaleId));
+                writer.newLine();
+            }
+            saveSalesTextBackupSnapshot();
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed writing sales history", e);
+        }
+    }
+
+    private void saveSalesTextBackupSnapshot() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(SALES_TEXT_BACKUP_FILE))) {
+            writer.write("Sales Backup");
+            writer.newLine();
+            writer.write("Saved at: " + dateFormatter.format(new Date()));
+            writer.newLine();
+            writer.write("------------------------------------------------------------");
+            writer.newLine();
+            for (SaleSummary sale : salesHistory) {
+                writer.write("Sale ID: " + sale.saleId + " | Time: " + sale.timestamp + " | Total: PHP " + String.format("%.2f", sale.total));
+                writer.newLine();
+                writer.write("Sync: " + sale.syncStatus + (sale.cloudSaleId.isBlank() ? "" : " | Cloud Sale ID: " + sale.cloudSaleId));
+                writer.newLine();
+                writer.write(sale.details.replace("\n", System.lineSeparator()));
+                writer.newLine();
+                writer.write("------------------------------------------------------------");
+                writer.newLine();
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed writing sales text backup snapshot", e);
+        }
+    }
+
     private void addItem() {
         try {
             String itemName = itemNameField.getText().trim();
@@ -715,6 +1527,7 @@ public class DrickSysApp extends JFrame {
             tableModel.addRow(new Object[]{itemName, itemCategory, quantity, price, dateAdded, ""});
             clearFields();
             updateTotalQuantity();
+            refreshPosItemChoices();
             saveInventory();
             logActionSafe("add_item", "Added: " + itemName + ", qty=" + quantity + ", price=" + price);
             if (cloudSynced) {
@@ -805,6 +1618,7 @@ public class DrickSysApp extends JFrame {
         tableModel.setValueAt(updatedDate, modelRow, 5);
         clearFields();
         updateTotalQuantity();
+        refreshPosItemChoices();
         saveInventory();
         logActionSafe("update_item", "Updated: " + originalItemName + " -> " + itemName + ", qty=" + quantity + ", price=" + price);
         if (cloudSynced) {
@@ -836,6 +1650,7 @@ public class DrickSysApp extends JFrame {
             tableModel.removeRow(modelRow);
             clearFields();
             updateTotalQuantity();
+            refreshPosItemChoices();
             saveInventory();
             logActionSafe("delete_item", "Deleted: " + itemName);
             if (cloudSynced) {
@@ -879,12 +1694,33 @@ public class DrickSysApp extends JFrame {
                 writer.newLine();
 
                 for (int i = 0; i < tableModel.getRowCount(); i++) {
-                    for (int j = 0; j < tableModel.getColumnCount(); j++) {
-                        writer.write(csvEscape(tableModel.getValueAt(i, j)));
-                        if (j < tableModel.getColumnCount() - 1) {
-                            writer.write(",");
+                for (int j = 0; j < tableModel.getColumnCount(); j++) {
+                    writer.write(csvEscape(tableModel.getValueAt(i, j)));
+                    if (j < tableModel.getColumnCount() - 1) {
+                        writer.write(",");
                         }
                     }
+                    writer.newLine();
+                }
+                writer.newLine();
+                writer.write("Sales History");
+                writer.newLine();
+                writer.write("Sale ID,Timestamp,Items,Units,Total,Sync Status,Cloud Sale ID");
+                writer.newLine();
+                for (SaleSummary sale : salesHistory) {
+                    writer.write(csvEscape(sale.saleId));
+                    writer.write(",");
+                    writer.write(csvEscape(sale.timestamp));
+                    writer.write(",");
+                    writer.write(csvEscape(sale.items));
+                    writer.write(",");
+                    writer.write(csvEscape(sale.units));
+                    writer.write(",");
+                    writer.write(csvEscape(sale.total));
+                    writer.write(",");
+                    writer.write(csvEscape(sale.syncStatus));
+                    writer.write(",");
+                    writer.write(csvEscape(sale.cloudSaleId));
                     writer.newLine();
                 }
                 JOptionPane.showMessageDialog(this, "Report generated successfully!", "Success", JOptionPane.INFORMATION_MESSAGE);
@@ -936,6 +1772,23 @@ public class DrickSysApp extends JFrame {
                 }
                 writer.newLine();
             }
+            writer.write(System.lineSeparator());
+            writer.write("Sales History");
+            writer.newLine();
+            writer.write("------------------------------------------------------------");
+            writer.newLine();
+            for (SaleSummary sale : salesHistory) {
+                writer.write("Sale ID: " + sale.saleId);
+                writer.write(" | Time: " + sale.timestamp);
+                writer.write(" | Total: PHP " + String.format("%.2f", sale.total));
+                writer.newLine();
+                writer.write("Sync: " + sale.syncStatus + (sale.cloudSaleId.isBlank() ? "" : " | Cloud Sale ID: " + sale.cloudSaleId));
+                writer.newLine();
+                writer.write(sale.details.replace("\n", System.lineSeparator()));
+                writer.newLine();
+                writer.write("------------------------------------------------------------");
+                writer.newLine();
+            }
             updateStatusBar("TXT backup exported: " + fileToSave.getName(), PRIMARY_COLOR.darker());
             JOptionPane.showMessageDialog(this, "Text backup exported successfully.", "Export Success", JOptionPane.INFORMATION_MESSAGE);
         } catch (IOException e) {
@@ -963,6 +1816,7 @@ public class DrickSysApp extends JFrame {
                 cloudDisconnectDialogShown = false;
                 updateCloudStatusIndicator();
                 saveInventory();
+                refreshPosItemChoices();
                 updateStatusBar("Inventory loaded from cloud.", PRIMARY_COLOR.darker());
                 return;
             } catch (IOException | InterruptedException e) {
@@ -1002,6 +1856,7 @@ public class DrickSysApp extends JFrame {
                     System.err.println("Skipping malformed inventory line (incorrect number of fields): " + line);
                 }
             }
+            refreshPosItemChoices();
             updateStatusBar("Inventory loaded successfully from " + INVENTORY_FILE, PRIMARY_COLOR.darker());
         } catch (FileNotFoundException e) {
             System.err.println("Error loading inventory: " + e.getMessage());
@@ -1030,6 +1885,7 @@ public class DrickSysApp extends JFrame {
                 }
                 bw.newLine();
             }
+            saveSalesHistory();
             saveTextBackupSnapshot();
             System.out.println("Inventory saved successfully to " + INVENTORY_FILE);
             if (isCloudConfigured() && cloudConnected) {
@@ -1082,7 +1938,9 @@ public class DrickSysApp extends JFrame {
         for (int i = 0; i < tableModel.getRowCount(); i++) {
             total += (int) tableModel.getValueAt(i, 2);
         }
-        totalQuantityLabel.setText("Total Items: " + total);
+        if (totalQuantityLabel != null) {
+            totalQuantityLabel.setText(String.valueOf(total));
+        }
     }
 
     private void setupSearch() {
@@ -1144,124 +2002,174 @@ public class DrickSysApp extends JFrame {
 
     private void showOrderDialog() {
         int selectedRow = inventoryTable.getSelectedRow();
-        if (selectedRow == -1) {
-            JOptionPane.showMessageDialog(this, "Please select an item to order.", "No Item Selected", JOptionPane.WARNING_MESSAGE);
-            updateStatusBar("Warning: No item selected for order.", Color.ORANGE);
+        if (selectedRow != -1) {
+            int modelRow = inventoryTable.convertRowIndexToModel(selectedRow);
+            posItemField.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 0)));
+        }
+        posQuantitySpinner.requestFocusInWindow();
+        updateStatusBar("POS is ready. Add items to the cart, then checkout once.", PRIMARY_COLOR.darker());
+    }
+
+
+    private void checkoutCart() {
+        List<CartLine> lines = buildCartLines();
+        if (lines.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Add at least one item to the cart before checkout.", "POS", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        int modelRow = inventoryTable.convertRowIndexToModel(selectedRow);
-        String itemName = (String) tableModel.getValueAt(modelRow, 0);
-        int availableQuantity = (int) tableModel.getValueAt(modelRow, 2);
-        double itemPrice = (double) tableModel.getValueAt(modelRow, 3);
-
-        String quantityStr = JOptionPane.showInputDialog(this,
-                "Enter quantity to order for '" + itemName + "' (Available: " + availableQuantity + "):",
-                ORDER_ITEM_TEXT, JOptionPane.QUESTION_MESSAGE);
-
-        if (quantityStr != null && !quantityStr.trim().isEmpty()) {
-            try {
-                int quantityToOrder = Integer.parseInt(quantityStr.trim());
-                if (quantityToOrder <= 0) {
-                    JOptionPane.showMessageDialog(this, "Quantity to order must be positive.", "Invalid Input", JOptionPane.ERROR_MESSAGE);
-                    updateStatusBar("Error: Order quantity must be positive.", Color.RED);
-                    return;
-                }
-                if (quantityToOrder > availableQuantity) {
-                    JOptionPane.showMessageDialog(this, "Not enough stock. Available: " + availableQuantity, "Insufficient Stock", JOptionPane.ERROR_MESSAGE);
-                    updateStatusBar("Error: Insufficient stock for '" + itemName + "'.", Color.RED);
-                    return;
-                }
-
-                orderProduct(modelRow, itemName, quantityToOrder, itemPrice);
-
-            } catch (NumberFormatException e) {
-                JOptionPane.showMessageDialog(this, "Invalid quantity. Please enter a number.", "Input Error", JOptionPane.ERROR_MESSAGE);
-                updateStatusBar("Error: Invalid quantity entered.", Color.RED);
+        for (CartLine line : lines) {
+            int row = findInventoryRowByName(line.itemName);
+            if (row < 0) {
+                JOptionPane.showMessageDialog(this, "Item missing from inventory: " + line.itemName, "POS", JOptionPane.ERROR_MESSAGE);
+                return;
             }
-        } else {
-            updateStatusBar("Order cancelled.", Color.GRAY);
+            int available = ((Number) tableModel.getValueAt(row, 2)).intValue();
+            if (line.quantity > available) {
+                JOptionPane.showMessageDialog(this, line.itemName + " only has " + available + " unit(s) left.", "Insufficient Stock", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
         }
-    }
 
+        double grandTotal = 0;
+        int totalUnits = 0;
+        String saleId = generateSaleId();
+        StringBuilder itemsSummary = new StringBuilder();
+        StringBuilder saleDetails = new StringBuilder();
+        for (int i = 0; i < lines.size(); i++) {
+            CartLine line = lines.get(i);
+            grandTotal += line.subtotal();
+            totalUnits += line.quantity;
+            if (i > 0) {
+                itemsSummary.append(", ");
+            }
+            itemsSummary.append(line.itemName).append(" x").append(line.quantity);
+            saleDetails.append(line.itemName)
+                    .append(" x").append(line.quantity)
+                    .append(" @ PHP ").append(String.format("%.2f", line.unitPrice))
+                    .append(" = PHP ").append(String.format("%.2f", line.subtotal()))
+                    .append("\n");
+        }
+        saleDetails.append("\nUnits: ").append(totalUnits)
+                .append("\nTotal: PHP ").append(String.format("%.2f", grandTotal));
+        saleDetails.append("\nReference ID: ").append(saleId);
 
-    private void orderProduct(int modelRow, String itemName, int quantityOrdered, double itemPrice) {
-        int currentQuantity = (int) tableModel.getValueAt(modelRow, 2);
-        int newQuantity = currentQuantity - quantityOrdered;
-        String updatedAt = dateFormatter.format(new Date());
-        String category = String.valueOf(tableModel.getValueAt(modelRow, 1));
+        int confirm = JOptionPane.showConfirmDialog(
+                this,
+                "Checkout " + totalUnits + " unit(s) across " + lines.size() + " item(s)?\nTotal: PHP " + String.format("%.2f", grandTotal),
+                "Confirm Sale",
+                JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE
+        );
+        if (confirm != JOptionPane.OK_OPTION) {
+            updateStatusBar("Checkout cancelled.", Color.GRAY);
+            return;
+        }
 
-        boolean cloudSynced = !isCloudConfigured() || runCloudOperation("place order", () ->
-                supabaseClient.placeSaleForInventoryItem(
-                        session,
-                        itemName,
-                        category,
-                        quantityOrdered,
-                        itemPrice,
-                        newQuantity
-                )
+        final long[] cloudSaleIdHolder = {-1L};
+        boolean cloudSynced = !isCloudConfigured() || runCloudOperation("checkout sale", () ->
+                cloudSaleIdHolder[0] = supabaseClient.placeSale(session, convertCartLinesToCloudItems(lines))
         );
 
-        tableModel.setValueAt(newQuantity, modelRow, 2);
-        tableModel.setValueAt(updatedAt, modelRow, 5);
+        String updatedAt = dateFormatter.format(new Date());
+        for (CartLine line : lines) {
+            int row = findInventoryRowByName(line.itemName);
+            int newQuantity = ((Number) tableModel.getValueAt(row, 2)).intValue() - line.quantity;
+            tableModel.setValueAt(newQuantity, row, 2);
+            tableModel.setValueAt(updatedAt, row, 5);
+        }
 
         updateTotalQuantity();
         saveInventory();
-        logActionSafe("order_item", "Ordered: " + itemName + ", qty=" + quantityOrdered + ", remaining=" + newQuantity);
+        refreshPosItemChoices();
+        String syncStatus = cloudSynced ? "Cloud Synced" : "Local Backup Only";
+        String cloudSaleId = cloudSaleIdHolder[0] > 0 ? String.valueOf(cloudSaleIdHolder[0]) : "";
+        String fullSaleDetails = "Sale ID: " + saleId
+                + "\nTimestamp: " + updatedAt
+                + "\nSync: " + syncStatus
+                + (cloudSaleId.isBlank() ? "" : "\nCloud Sale ID: " + cloudSaleId)
+                + "\n\n" + saleDetails;
+        addRecentSale(new SaleSummary(saleId, updatedAt, itemsSummary.toString(), totalUnits, grandTotal, fullSaleDetails, syncStatus, cloudSaleId));
+        logActionSafe("order_item", "Sale completed [" + saleId + "]: " + itemsSummary + ", total=" + grandTotal);
+        clearCart();
 
         if (cloudSynced) {
-            updateStatusBar("Ordered " + quantityOrdered + " of '" + itemName + "'. Synced to cloud.", PRIMARY_COLOR.darker());
+            updateStatusBar("Sale completed and synced. Total: PHP " + String.format("%.2f", grandTotal), PRIMARY_COLOR.darker());
         } else {
-            updateStatusBar("Ordered " + quantityOrdered + " of '" + itemName + "' locally (offline mode).", Color.ORANGE.darker());
+            updateStatusBar("Sale completed locally (offline mode). Total: PHP " + String.format("%.2f", grandTotal), Color.ORANGE.darker());
         }
-        JOptionPane.showMessageDialog(this, "Order for " + quantityOrdered + " units of '" + itemName + "' placed successfully!", "Order Placed", JOptionPane.INFORMATION_MESSAGE);
+        JOptionPane.showMessageDialog(this, "Sale completed.\nTotal: PHP " + String.format("%.2f", grandTotal), "Checkout Complete", JOptionPane.INFORMATION_MESSAGE);
 
-        executorService.submit(() -> {
-            generateReceipt(itemName, quantityOrdered, itemPrice, newQuantity);
-        });
+        List<CartLine> receiptLines = new ArrayList<>(lines);
+        double receiptTotal = grandTotal;
+        String receiptSaleId = saleId;
+        executorService.submit(() -> generateReceipt(receiptSaleId, receiptLines, receiptTotal));
     }
 
-    private void generateReceipt(String itemName, int quantityOrdered, double itemPrice, int remainingQuantity) {
+    private void handleCheckoutCartAction(ActionEvent event) {
+        checkoutCart();
+    }
+
+    private List<SupabaseClient.SaleItem> convertCartLinesToCloudItems(List<CartLine> lines) {
+        List<SupabaseClient.SaleItem> items = new ArrayList<>();
+        for (CartLine line : lines) {
+            int row = findInventoryRowByName(line.itemName);
+            int currentQuantity = ((Number) tableModel.getValueAt(row, 2)).intValue();
+            items.add(new SupabaseClient.SaleItem(
+                    line.itemName,
+                    line.category,
+                    line.quantity,
+                    line.unitPrice,
+                    currentQuantity - line.quantity
+            ));
+        }
+        return items;
+    }
+
+    private void generateReceipt(String saleId, List<CartLine> lines, double grandTotal) {
         File receiptsDir = new File(RECEIPTS_DIR);
         if (!receiptsDir.exists()) {
             receiptsDir.mkdirs();
         }
 
         String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-        String receiptFileName = RECEIPTS_DIR + "/receipt_" + timestamp + ".txt";
+        String receiptFileName = RECEIPTS_DIR + "/receipt_" + saleId + "_" + timestamp + ".txt";
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(receiptFileName))) {
-            writer.write("----- Bambu Vibe Receipt -----\n");
+            writer.write("----- DrickSys Receipt -----\n");
+            writer.write("Sale ID: " + saleId + "\n");
             writer.write("Date: " + dateFormatter.format(new Date()) + "\n");
             writer.write("------------------------------\n");
-            writer.write("Item Ordered: " + itemName + "\n");
-            writer.write("Quantity: " + quantityOrdered + "\n");
-            writer.write("Price Per Unit: ₱" + String.format("%.2f", itemPrice) + "\n");
-            writer.write("Total Amount: ₱" + String.format("%.2f", (quantityOrdered * itemPrice)) + "\n");
-            writer.write("Remaining Stock: " + remainingQuantity + "\n");
+            for (CartLine line : lines) {
+                int row = findInventoryRowByName(line.itemName);
+                int lineRemainingQuantity = row >= 0 ? ((Number) tableModel.getValueAt(row, 2)).intValue() : 0;
+                writer.write(line.itemName + " x" + line.quantity
+                        + " @ PHP " + String.format("%.2f", line.unitPrice)
+                        + " = PHP " + String.format("%.2f", line.subtotal()) + "\n");
+                writer.write("Remaining Stock: " + lineRemainingQuantity + "\n");
+            }
+            writer.write("------------------------------\n");
+            writer.write("Grand Total: PHP " + String.format("%.2f", grandTotal) + "\n");
             writer.write("------------------------------\n");
             writer.write("Thank you for your order!\n");
 
-            SwingUtilities.invokeLater(() -> {
-                updateStatusBar("Receipt generated: " + receiptFileName, PRIMARY_COLOR.darker());
-            });
-
+            SwingUtilities.invokeLater(() -> updateStatusBar("Receipt generated: " + receiptFileName, PRIMARY_COLOR.darker()));
         } catch (IOException e) {
             System.err.println("Error generating receipt: " + e.getMessage());
-            SwingUtilities.invokeLater(() -> {
-                updateStatusBar("Error generating receipt for '" + itemName + "'.", Color.RED);
-            });
+            SwingUtilities.invokeLater(() -> updateStatusBar("Error generating receipt.", Color.RED));
         }
     }
 
     private void showActivityLogsDialog() {
-        if (!isCloudReady()) {
-            JOptionPane.showMessageDialog(this, "Cloud is currently unavailable. Reconnect to view activity logs.", "Logs Unavailable", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-
         try {
-            java.util.List<SupabaseClient.ActionLogRecord> logs = supabaseClient.fetchActionLogs(session);
+            java.util.List<SupabaseClient.ActionLogRecord> logs = new ArrayList<>(loadLocalActionLogs());
+            if (isCloudReady()) {
+                java.util.List<SupabaseClient.ActionLogRecord> cloudLogs = supabaseClient.fetchActionLogs(session);
+                if (!cloudLogs.isEmpty()) {
+                    logs = cloudLogs;
+                }
+            }
+
             String[] columns = {"Timestamp", "Action", "Details"};
             DefaultTableModel logsTableModel = new DefaultTableModel(columns, 0) {
                 @Override
@@ -1273,6 +2181,9 @@ public class DrickSysApp extends JFrame {
             for (SupabaseClient.ActionLogRecord log : logs) {
                 logsTableModel.addRow(new Object[]{log.getCreatedAt(), log.getActionType(), log.getDetails()});
             }
+            if (logs.isEmpty()) {
+                logsTableModel.addRow(new Object[]{"-", "info", "No activity logs recorded yet."});
+            }
 
             JTable logsTable = new JTable(logsTableModel);
             logsTable.setRowHeight(26);
@@ -1282,7 +2193,10 @@ public class DrickSysApp extends JFrame {
 
             JDialog dialog = new JDialog(this, ACTIVITY_LOGS_TEXT, true);
             dialog.setLayout(new BorderLayout());
-            dialog.add(new JScrollPane(logsTable), BorderLayout.CENTER);
+            dialog.getContentPane().setBackground(SECONDARY_COLOR);
+            JScrollPane scrollPane = new JScrollPane(logsTable);
+            scrollPane.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 2));
+            dialog.add(scrollPane, BorderLayout.CENTER);
             dialog.setSize(700, 400);
             dialog.setLocationRelativeTo(this);
             dialog.setVisible(true);
@@ -1685,6 +2599,7 @@ public class DrickSysApp extends JFrame {
         table.getTableHeader().setFont(HEADER_FONT);
         table.getTableHeader().setForeground(TEXT_COLOR);
         table.getTableHeader().setBackground(BUTTON_COLOR);
+        table.getTableHeader().setReorderingAllowed(false);
         return table;
     }
 
@@ -1695,7 +2610,6 @@ public class DrickSysApp extends JFrame {
 
         JTabbedPane tabs = new JTabbedPane();
         tabs.setFont(MAIN_FONT.deriveFont(Font.BOLD));
-        tabs.addTab("Items", createItemsWorkspaceTab(dialog));
         tabs.addTab("Suppliers", createSuppliersWorkspaceTab(dialog));
         tabs.addTab("Expirations", createExpirationsWorkspaceTab(dialog));
         tabs.addTab("Ingredients", createIngredientsWorkspaceTab(dialog));
@@ -1705,146 +2619,6 @@ public class DrickSysApp extends JFrame {
         dialog.setSize(1100, 520);
         dialog.setLocationRelativeTo(this);
         dialog.setVisible(true);
-    }
-
-    private JPanel createItemsWorkspaceTab(JDialog dialog) {
-        String[] columns = {"Item Name", "Category", "Quantity", "Price"};
-        DefaultTableModel model = new DefaultTableModel(columns, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) {
-                return false;
-            }
-        };
-        JTable table = createWorkspaceTable(model);
-
-        Runnable refresh = () -> {
-            model.setRowCount(0);
-            try {
-                for (SupabaseClient.InventoryRecord record : supabaseClient.fetchInventory(session)) {
-                    model.addRow(new Object[]{record.getItemName(), record.getCategory(), record.getQuantity(), record.getPrice()});
-                }
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Failed to load items: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
-            }
-        };
-        refresh.run();
-
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        panel.setBackground(SECONDARY_COLOR);
-        JScrollPane scrollPane = new JScrollPane(table);
-        scrollPane.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
-        panel.add(scrollPane, BorderLayout.CENTER);
-
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        actions.setBackground(SECONDARY_COLOR);
-        actions.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
-        JButton add = createDialogActionButton("Add");
-        JButton edit = createDialogActionButton("Edit");
-        JButton delete = createDialogActionButton("Delete");
-        JButton refreshBtn = createDialogActionButton("Refresh");
-
-        add.addActionListener(event -> {
-            event.getSource();
-            JTextField name = new JTextField(18);
-            JTextField category = new JTextField(18);
-            JTextField qty = new JTextField(18);
-            JTextField price = new JTextField(18);
-            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
-            form.setBackground(SECONDARY_COLOR);
-            form.add(new JLabel("Item Name:")); form.add(name);
-            form.add(new JLabel("Category:")); form.add(category);
-            form.add(new JLabel("Quantity:")); form.add(qty);
-            form.add(new JLabel("Price:")); form.add(price);
-            if (JOptionPane.showConfirmDialog(dialog, form, "Add Item", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
-                return;
-            }
-            if (!qty.getText().trim().matches("\\d+")) {
-                JOptionPane.showMessageDialog(dialog, "Quantity must be numeric.", "Validation", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            try {
-                double parsedPrice = Double.parseDouble(price.getText().trim());
-                supabaseClient.insertInventoryItem(session, name.getText().trim(), category.getText().trim(), Integer.parseInt(qty.getText().trim()), parsedPrice, "", "");
-                refresh.run();
-                loadInventory();
-                updateTotalQuantity();
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(dialog, "Price must be numeric.", "Validation", JOptionPane.WARNING_MESSAGE);
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Add item failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-
-        edit.addActionListener(event -> {
-            event.getSource();
-            int row = table.getSelectedRow();
-            if (row < 0) {
-                JOptionPane.showMessageDialog(dialog, "Select an item to edit.", "No Selection", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            String oldName = String.valueOf(model.getValueAt(row, 0));
-            JTextField name = new JTextField(oldName, 18);
-            JTextField category = new JTextField(String.valueOf(model.getValueAt(row, 1)), 18);
-            JTextField qty = new JTextField(String.valueOf(model.getValueAt(row, 2)), 18);
-            JTextField price = new JTextField(String.valueOf(model.getValueAt(row, 3)), 18);
-            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
-            form.setBackground(SECONDARY_COLOR);
-            form.add(new JLabel("Item Name:")); form.add(name);
-            form.add(new JLabel("Category:")); form.add(category);
-            form.add(new JLabel("Quantity:")); form.add(qty);
-            form.add(new JLabel("Price:")); form.add(price);
-            if (JOptionPane.showConfirmDialog(dialog, form, "Edit Item", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
-                return;
-            }
-            if (!qty.getText().trim().matches("\\d+")) {
-                JOptionPane.showMessageDialog(dialog, "Quantity must be numeric.", "Validation", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            try {
-                double parsedPrice = Double.parseDouble(price.getText().trim());
-                supabaseClient.updateInventoryItemByName(session, oldName, name.getText().trim(), category.getText().trim(), Integer.parseInt(qty.getText().trim()), parsedPrice, "");
-                refresh.run();
-                loadInventory();
-                updateTotalQuantity();
-            } catch (NumberFormatException ex) {
-                JOptionPane.showMessageDialog(dialog, "Price must be numeric.", "Validation", JOptionPane.WARNING_MESSAGE);
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Edit item failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-
-        delete.addActionListener(event -> {
-            event.getSource();
-            int row = table.getSelectedRow();
-            if (row < 0) {
-                JOptionPane.showMessageDialog(dialog, "Select an item to delete.", "No Selection", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            String itemName = String.valueOf(model.getValueAt(row, 0));
-            if (JOptionPane.showConfirmDialog(dialog, "Delete item '" + itemName + "'?", "Confirm Delete", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
-                return;
-            }
-            try {
-                supabaseClient.deleteInventoryItemByName(session, itemName);
-                refresh.run();
-                loadInventory();
-                updateTotalQuantity();
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Delete item failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
-            }
-        });
-
-        refreshBtn.addActionListener(event -> {
-            event.getSource();
-            refresh.run();
-        });
-
-        actions.add(add);
-        actions.add(edit);
-        actions.add(delete);
-        actions.add(refreshBtn);
-        panel.add(actions, BorderLayout.SOUTH);
-        return panel;
     }
 
     private JPanel createSuppliersWorkspaceTab(JDialog dialog) {
@@ -2321,11 +3095,11 @@ public class DrickSysApp extends JFrame {
     }
 
     private void logActionSafe(String actionType, String details) {
-        if (!isCloudReady()) {
-            return;
-        }
+        appendLocalActionLog(actionType, details);
         try {
-            supabaseClient.logAction(session, actionType, details);
+            if (isCloudReady()) {
+                supabaseClient.logAction(session, actionType, details);
+            }
         } catch (IOException | InterruptedException ignored) {
         }
     }
@@ -2387,3 +3161,4 @@ public class DrickSysApp extends JFrame {
         });
     }
 }
+
