@@ -4,13 +4,14 @@ import java.io.*;
 import javax.swing.*;
 
 public class LoginFrame extends JFrame {
+    private static final long serialVersionUID = 1L;
 
     private final JTextField usernameField;
     private final JPasswordField passwordField;
     private final JCheckBox showPasswordCheckBox;
 
-    private final SupabaseClient supabaseClient;
-    private final SupabaseSessionStore sessionStore;
+    private final transient SupabaseClient supabaseClient;
+    private final transient SupabaseSessionStore sessionStore;
 
     private static final Color LOGIN_TITLE_COLOR  = new Color(230, 220, 190);
     private static final Color LOGIN_LABEL_COLOR  = new Color(240, 232, 210);
@@ -19,6 +20,7 @@ public class LoginFrame extends JFrame {
     private static final Color LOGIN_BORDER_COLOR = new Color(101, 67, 33);
     private static final Font  LOGIN_FONT         = new Font("Georgia", Font.PLAIN, 14);
 
+    @SuppressWarnings("this-escape")
     public LoginFrame() {
         setTitle("Login");
         ImageIcon appIcon = loadResourceIcon("/resources/myicon.png");
@@ -26,9 +28,7 @@ public class LoginFrame extends JFrame {
             setIconImage(appIcon.getImage());
         }
         setResizable(false);
-        setSize(400, 450);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        setLocationRelativeTo(null);
 
         sessionStore = new SupabaseSessionStore();
         supabaseClient = new SupabaseClient(SupabaseConfig.getSupabaseUrl(), SupabaseConfig.getPublishableKey());
@@ -46,9 +46,13 @@ public class LoginFrame extends JFrame {
         }
         setLayout(new BorderLayout());
 
+        JPanel centerWrapper = new JPanel(new GridBagLayout());
+        centerWrapper.setOpaque(false);
+
         JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
         mainPanel.setOpaque(false);
-        mainPanel.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+        mainPanel.setPreferredSize(new Dimension(400, 350));
 
         JLabel logoLabel = new JLabel("Drickoi's", SwingConstants.CENTER);
         logoLabel.setFont(new Font("Georgia", Font.BOLD, 32));
@@ -58,9 +62,10 @@ public class LoginFrame extends JFrame {
         JPanel loginInputPanel = new JPanel();
         loginInputPanel.setLayout(new BoxLayout(loginInputPanel, BoxLayout.Y_AXIS));
         loginInputPanel.setOpaque(false);
+        loginInputPanel.setAlignmentX(Component.CENTER_ALIGNMENT);
         loginInputPanel.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(LOGIN_BORDER_COLOR, 2),
-                BorderFactory.createEmptyBorder(20, 20, 20, 20)
+                BorderFactory.createEmptyBorder(20, 20, 28, 20)
         ));
 
         usernameField     = createStyledTextField("Enter email");
@@ -69,13 +74,16 @@ public class LoginFrame extends JFrame {
 
         showPasswordCheckBox.setOpaque(false);
         showPasswordCheckBox.setFont(LOGIN_FONT);
-        showPasswordCheckBox.setForeground(LOGIN_LABEL_COLOR);
+        showPasswordCheckBox.setForeground(Color.WHITE);
         showPasswordCheckBox.setFocusPainted(false);
+        showPasswordCheckBox.setBorder(BorderFactory.createEmptyBorder(4, 0, 4, 0));
         showPasswordCheckBox.addActionListener(this::handleTogglePasswordVisibilityAction);
 
         loginInputPanel.add(createLabeledPanel("Email:", usernameField));
         loginInputPanel.add(Box.createVerticalStrut(10));
         loginInputPanel.add(createLabeledPanel("Password:", passwordField));
+        loginInputPanel.add(Box.createVerticalStrut(14));
+        showPasswordCheckBox.setAlignmentX(Component.CENTER_ALIGNMENT);
         loginInputPanel.add(showPasswordCheckBox);
 
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 10));
@@ -98,7 +106,13 @@ public class LoginFrame extends JFrame {
         mainPanel.add(loginInputPanel, BorderLayout.CENTER);
         mainPanel.add(buttonPanel, BorderLayout.SOUTH);
 
-        add(mainPanel);
+        centerWrapper.add(mainPanel);
+        add(centerWrapper, BorderLayout.CENTER);
+
+        pack();
+        setMinimumSize(new Dimension(470, 540));
+        setSize(getMinimumSize());
+        setLocationRelativeTo(null);
 
         SwingUtilities.invokeLater(this::restoreSessionIfAvailable);
     }
@@ -109,10 +123,14 @@ public class LoginFrame extends JFrame {
         label.setForeground(LOGIN_LABEL_COLOR);
         label.setPreferredSize(new Dimension(85, label.getPreferredSize().height));
 
-        JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         panel.setOpaque(false);
-        panel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        panel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        field.setAlignmentX(Component.CENTER_ALIGNMENT);
         panel.add(label);
+        panel.add(Box.createVerticalStrut(6));
         panel.add(field);
         return panel;
     }
@@ -123,7 +141,7 @@ public class LoginFrame extends JFrame {
     }
 
     private JTextField createStyledTextField(String placeholder) {
-        JTextField textField = new JTextField(15);
+        JTextField textField = new JTextField(20);
         textField.setText(placeholder);
         textField.setFont(LOGIN_FONT);
         textField.setForeground(Color.GRAY);
@@ -153,7 +171,7 @@ public class LoginFrame extends JFrame {
     }
 
     private JPasswordField createStyledPasswordField(String placeholder) {
-        JPasswordField pwdField = new JPasswordField(15);
+        JPasswordField pwdField = new JPasswordField(20);
         pwdField.setText(placeholder);
         pwdField.setFont(LOGIN_FONT);
         pwdField.setForeground(Color.GRAY);

@@ -3,6 +3,7 @@ import java.io.IOException;
 import javax.swing.*;
 
 public class RegistrationFrame extends JFrame {
+    private static final long serialVersionUID = 1L;
     private final JTextField usernameField;
     private final JTextField nameField;
     private final JTextField addressField;
@@ -12,7 +13,6 @@ public class RegistrationFrame extends JFrame {
     private final JTextField ageField;
 
     private static final Color TEXT_COLOR   = new Color(0, 0, 0);
-    private static final Color TITLE_COLOR  = new Color(50, 80, 45);
     private static final Color BORDER_COLOR = new Color(101, 67, 33);
     private static final Color BUTTON_COLOR = new Color(180, 150, 110);
 
@@ -21,65 +21,77 @@ public class RegistrationFrame extends JFrame {
     private static final Font TITLE_FONT = new Font("Georgia", Font.BOLD, 28);
 
     private final LoginFrame loginFrame;
-    private final SupabaseClient supabaseClient;
+    private final transient SupabaseClient supabaseClient;
 
+    @SuppressWarnings("this-escape")
     public RegistrationFrame(LoginFrame loginFrame, SupabaseClient supabaseClient) {
         this.loginFrame      = loginFrame;
         this.supabaseClient = supabaseClient;
 
-        setTitle("Register - Bambu Vibe");
-        setIconImage(new ImageIcon("resources/myicon.png").getImage());
-        setSize(400, 450);
-        setLocationRelativeTo(null);
+        setTitle("Register - Drickoi's");
+        ImageIcon appIcon = loadResourceIcon("/resources/myicon.png");
+        if (appIcon != null) {
+            setIconImage(appIcon.getImage());
+        }
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setResizable(false);
 
-        setContentPane(new JLabel(new ImageIcon("resources/background.jpg")));
+        ImageIcon backgroundIcon = loadResourceIcon("/resources/Background.png");
+        if (backgroundIcon != null) {
+            setContentPane(new JLabel(backgroundIcon));
+        }
         setLayout(new BorderLayout());
 
-        JPanel mainPanel = new JPanel(new GridBagLayout());
+        JPanel centerWrapper = new JPanel(new GridBagLayout());
+        centerWrapper.setOpaque(false);
+
+        JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
         mainPanel.setOpaque(false);
-        mainPanel.setBorder(BorderFactory.createEmptyBorder(10, 30, 10, 30));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(24, 28, 24, 28));
+        mainPanel.setPreferredSize(new Dimension(420, 560));
 
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(5, 5, 5, 5);
-        gbc.anchor = GridBagConstraints.WEST;
-
-        // Title
         JLabel titleLabel = new JLabel("Register");
         titleLabel.setFont(TITLE_FONT);
-        titleLabel.setForeground(TITLE_COLOR);
-        gbc.gridx = 0;
-        gbc.gridy = 0;
-        gbc.gridwidth = 2;
-        gbc.anchor = GridBagConstraints.CENTER;
-        mainPanel.add(titleLabel, gbc);
+        titleLabel.setForeground(new Color(230, 220, 190));
+        titleLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        mainPanel.add(titleLabel, BorderLayout.NORTH);
 
-        gbc.anchor = GridBagConstraints.WEST;
-        gbc.gridwidth = 1;
-        gbc.gridy++;
+        JPanel formPanel = new JPanel();
+        formPanel.setLayout(new BoxLayout(formPanel, BoxLayout.Y_AXIS));
+        formPanel.setOpaque(false);
+        formPanel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        formPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR, 2),
+                BorderFactory.createEmptyBorder(18, 20, 18, 20)
+        ));
 
         usernameField = createTextField();
-        addField(mainPanel, gbc, "Username:", usernameField);
+        formPanel.add(createLabeledPanel("Username:", usernameField));
+        formPanel.add(Box.createVerticalStrut(10));
 
         passwordField = createPasswordField();
-        addField(mainPanel, gbc, "Password:", passwordField);
+        formPanel.add(createLabeledPanel("Password:", passwordField));
+        formPanel.add(Box.createVerticalStrut(10));
 
         nameField = createTextField();
-        addField(mainPanel, gbc, "Name:", nameField);
+        formPanel.add(createLabeledPanel("Name:", nameField));
+        formPanel.add(Box.createVerticalStrut(10));
 
         ageField = createTextField();
-        addField(mainPanel, gbc, "Age:", ageField);
+        formPanel.add(createLabeledPanel("Age:", ageField));
+        formPanel.add(Box.createVerticalStrut(10));
 
         addressField = createTextField();
-        addField(mainPanel, gbc, "Address:", addressField);
+        formPanel.add(createLabeledPanel("Address:", addressField));
+        formPanel.add(Box.createVerticalStrut(10));
 
         emailField = createTextField();
-        addField(mainPanel, gbc, "Email:", emailField);
+        formPanel.add(createLabeledPanel("Email:", emailField));
+        formPanel.add(Box.createVerticalStrut(10));
 
         phoneField = createTextField();
-        addField(mainPanel, gbc, "Phone:", phoneField);
+        formPanel.add(createLabeledPanel("Phone:", phoneField));
 
-        // Buttons
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
         buttonPanel.setOpaque(false);
 
@@ -95,30 +107,46 @@ public class RegistrationFrame extends JFrame {
         buttonPanel.add(saveButton);
         buttonPanel.add(cancelButton);
 
-        gbc.gridx = 0;
-        gbc.gridy++;
-        gbc.gridwidth = 2;
-        gbc.anchor = GridBagConstraints.CENTER;
-        mainPanel.add(buttonPanel, gbc);
+        JPanel contentPanel = new JPanel(new BorderLayout(0, 10));
+        contentPanel.setOpaque(false);
+        contentPanel.add(formPanel, BorderLayout.CENTER);
+        contentPanel.add(buttonPanel, BorderLayout.SOUTH);
 
-        add(mainPanel, BorderLayout.CENTER);
+        mainPanel.add(contentPanel, BorderLayout.CENTER);
+
+        centerWrapper.add(mainPanel);
+        add(centerWrapper, BorderLayout.CENTER);
+
+        pack();
+        setMinimumSize(new Dimension(500, 700));
+        setSize(getMinimumSize());
+        setLocationRelativeTo(null);
     }
 
-    private void addField(JPanel panel, GridBagConstraints gbc, String labelText, JComponent field) {
+    private JPanel createLabeledPanel(String labelText, JComponent field) {
         JLabel label = new JLabel(labelText);
         label.setFont(LABEL_FONT);
-        label.setForeground(TEXT_COLOR);
+        label.setForeground(new Color(240, 232, 210));
+        label.setAlignmentX(Component.CENTER_ALIGNMENT);
+        field.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        gbc.gridx = 0;
-        gbc.gridy++;
-        panel.add(label, gbc);
+        JPanel panel = new JPanel();
+        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        panel.setOpaque(false);
+        panel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        panel.add(label);
+        panel.add(Box.createVerticalStrut(6));
+        panel.add(field);
+        return panel;
+    }
 
-        gbc.gridx = 1;
-        panel.add(field, gbc);
+    private ImageIcon loadResourceIcon(String path) {
+        java.net.URL resource = getClass().getResource(path);
+        return resource != null ? new ImageIcon(resource) : null;
     }
 
     private JTextField createTextField() {
-        JTextField textField = new JTextField(15);
+        JTextField textField = new JTextField(20);
         textField.setFont(BASE_FONT);
         textField.setForeground(TEXT_COLOR);
         textField.setBorder(BorderFactory.createCompoundBorder(
@@ -129,7 +157,7 @@ public class RegistrationFrame extends JFrame {
     }
 
     private JPasswordField createPasswordField() {
-        JPasswordField pwdField = new JPasswordField(15);
+        JPasswordField pwdField = new JPasswordField(20);
         pwdField.setFont(BASE_FONT);
         pwdField.setForeground(TEXT_COLOR);
         pwdField.setBorder(BorderFactory.createCompoundBorder(

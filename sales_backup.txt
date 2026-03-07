@@ -1,5 +1,17 @@
 Sales Backup
-Saved at: 2026-03-07 17:26:21
+Saved at: 2026-03-07 21:20:55
+------------------------------------------------------------
+Sale ID: CLOUD-14 | Time: 2026-03-07 00:00:00 | Total: PHP 414.00
+Sync: Cloud Imported | Cloud Sale ID: 14
+Sale ID: CLOUD-14
+Timestamp: 2026-03-07 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 14
+
+Zues x6 @ PHP 69.00 = PHP 414.00
+
+Units: 6
+Total: PHP 414.00
 ------------------------------------------------------------
 Sale ID: CLOUD-13 | Time: 2026-03-07 00:00:00 | Total: PHP 307.00
 Sync: Cloud Imported | Cloud Sale ID: 13

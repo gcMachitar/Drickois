@@ -1,6 +1,7 @@
 import java.awt.*;
 import java.awt.event.*;
 import java.io.*;
+import java.awt.print.PrinterException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -19,6 +20,7 @@ import javax.swing.plaf.basic.BasicButtonUI;
 import javax.swing.table.*;
 
 public class DrickSysApp extends JFrame {
+    private static final long serialVersionUID = 1L;
     private static final Logger LOGGER = Logger.getLogger(DrickSysApp.class.getName());
 
     private DefaultTableModel tableModel;
@@ -29,7 +31,7 @@ public class DrickSysApp extends JFrame {
     private JTextField itemPriceField;
     private JTextField searchField;
     private JLabel totalQuantityLabel;
-    private TableRowSorter<DefaultTableModel> sorter;
+    private transient TableRowSorter<DefaultTableModel> sorter;
     private JLabel statusBarLabel;
     private JLabel cloudStatusLabel;
     private JButton addButtonReference;
@@ -47,8 +49,8 @@ public class DrickSysApp extends JFrame {
     private JPanel posPanel;
 
     private final LoginFrame loginFrame;
-    private final SupabaseClient supabaseClient;
-    private final SupabaseSession session;
+    private final transient SupabaseClient supabaseClient;
+    private final transient SupabaseSession session;
 
     private final SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private static final String INVENTORY_FILE = "inventory.csv";
@@ -62,7 +64,6 @@ public class DrickSysApp extends JFrame {
     private static final String DEFAULT_PRICE_PLACEHOLDER = "e.g., 125.50";
 
     private static final String ADD_ITEM_TEXT = "Add Item";
-    private static final String ORDER_ITEM_TEXT = "Order Item";
     private static final String ACTIVITY_LOGS_TEXT = "Activity Logs";
     private static final String INVENTORY_HUB_TEXT = "Inventory";
     private static final String SUPPLIER_TEXT = "Suppliers";
@@ -82,9 +83,9 @@ public class DrickSysApp extends JFrame {
 
     private final int LOW_STOCK_THRESHOLD = 10;
 
-    private final ExecutorService executorService = Executors.newSingleThreadExecutor();
-    private final List<SaleSummary> recentSales = new ArrayList<>();
-    private final List<SaleSummary> salesHistory = new ArrayList<>();
+    private final transient ExecutorService executorService = Executors.newSingleThreadExecutor();
+    private final transient List<SaleSummary> recentSales = new ArrayList<>();
+    private final transient List<SaleSummary> salesHistory = new ArrayList<>();
     private boolean cloudConnected;
     private boolean cloudDisconnectDialogShown;
     private int sessionSalesCount;
@@ -132,10 +133,12 @@ public class DrickSysApp extends JFrame {
     }
 
 
+    @SuppressWarnings("this-escape")
     public DrickSysApp() {
         this(null, null, null);
     }
 
+    @SuppressWarnings("this-escape")
     public DrickSysApp(LoginFrame loginFrame, SupabaseClient supabaseClient, SupabaseSession session) {
         this.loginFrame = loginFrame;
         this.supabaseClient = supabaseClient;
@@ -367,7 +370,7 @@ public class DrickSysApp extends JFrame {
         posQuantitySpinner = new JSpinner(new SpinnerNumberModel(1, 1, 9999, 1));
         posQuantitySpinner.setFont(MAIN_FONT);
         JButton addToCartButton = createDialogActionButton("Add To Cart");
-        addToCartButton.addActionListener(this::handleAddToCartAction);
+        addToCartButton.addActionListener(event -> addSelectedItemToCart());
 
         gbc.gridx = 0;
         gbc.gridy = 0;
@@ -411,12 +414,12 @@ public class DrickSysApp extends JFrame {
         cartFooter.add(cartTotalLabel);
 
         JButton removeLineButton = createDialogActionButton("Remove Line");
-        removeLineButton.addActionListener(this::handleRemoveSelectedCartLineAction);
+        removeLineButton.addActionListener(event -> removeSelectedCartLine());
         JButton clearCartButton = createDialogActionButton("Clear Cart");
-        clearCartButton.addActionListener(this::handleClearCartAction);
+        clearCartButton.addActionListener(event -> clearCart());
         JButton checkoutButton = createPrimaryActionButton("Checkout Sale");
         setButtonIcon(checkoutButton, "/resources/orderIcon.png", 18);
-        checkoutButton.addActionListener(this::handleCheckoutCartAction);
+        checkoutButton.addActionListener(event -> checkoutCart());
 
         checkoutButton.setFont(HEADER_FONT.deriveFont(Font.BOLD));
 
@@ -483,6 +486,7 @@ public class DrickSysApp extends JFrame {
     }
 
     private class LowQuantityRenderer extends DefaultTableCellRenderer {
+        private static final long serialVersionUID = 1L;
         public LowQuantityRenderer() {
             setHorizontalAlignment(JLabel.CENTER);
         }
@@ -968,10 +972,6 @@ public class DrickSysApp extends JFrame {
         posQuantitySpinner.setValue(1);
     }
 
-    private void handleAddToCartAction(ActionEvent event) {
-        addSelectedItemToCart();
-    }
-
     private void removeSelectedCartLine() {
         int selectedRow = cartTable.getSelectedRow();
         if (selectedRow == -1) {
@@ -983,18 +983,10 @@ public class DrickSysApp extends JFrame {
         updateStatusBar("Cart line removed.", TEXT_COLOR);
     }
 
-    private void handleRemoveSelectedCartLineAction(ActionEvent event) {
-        removeSelectedCartLine();
-    }
-
     private void clearCart() {
         cartTableModel.setRowCount(0);
         updateCartSummary();
         updateStatusBar("Current sale cleared.", TEXT_COLOR);
-    }
-
-    private void handleClearCartAction(ActionEvent event) {
-        clearCart();
     }
 
     private List<CartLine> buildCartLines() {
@@ -1336,7 +1328,7 @@ public class DrickSysApp extends JFrame {
                 if (line.getSaleId() <= 0) {
                     continue;
                 }
-                groupedLines.computeIfAbsent(line.getSaleId(), ignored -> new ArrayList<>()).add(line);
+                groupedLines.computeIfAbsent(line.getSaleId(), saleId -> new ArrayList<>()).add(line);
             }
 
             boolean changed = false;
@@ -2098,16 +2090,15 @@ public class DrickSysApp extends JFrame {
         } else {
             updateStatusBar("Sale completed locally (offline mode). Total: PHP " + String.format("%.2f", grandTotal), Color.ORANGE.darker());
         }
-        JOptionPane.showMessageDialog(this, "Sale completed.\nTotal: PHP " + String.format("%.2f", grandTotal), "Checkout Complete", JOptionPane.INFORMATION_MESSAGE);
-
         List<CartLine> receiptLines = new ArrayList<>(lines);
         double receiptTotal = grandTotal;
         String receiptSaleId = saleId;
-        executorService.submit(() -> generateReceipt(receiptSaleId, receiptLines, receiptTotal));
-    }
-
-    private void handleCheckoutCartAction(ActionEvent event) {
-        checkoutCart();
+        executorService.submit(() -> {
+            String receiptPath = generateReceipt(receiptSaleId, receiptLines, receiptTotal);
+            if (receiptPath != null) {
+                SwingUtilities.invokeLater(() -> promptReceiptPrinting(receiptSaleId, receiptLines, receiptTotal, receiptPath));
+            }
+        });
     }
 
     private List<SupabaseClient.SaleItem> convertCartLinesToCloudItems(List<CartLine> lines) {
@@ -2126,37 +2117,87 @@ public class DrickSysApp extends JFrame {
         return items;
     }
 
-    private void generateReceipt(String saleId, List<CartLine> lines, double grandTotal) {
+    private String generateReceipt(String saleId, List<CartLine> lines, double grandTotal) {
         File receiptsDir = new File(RECEIPTS_DIR);
-        if (!receiptsDir.exists()) {
-            receiptsDir.mkdirs();
+        if (!receiptsDir.exists() && !receiptsDir.mkdirs()) {
+            SwingUtilities.invokeLater(() -> updateStatusBar("Could not create receipts folder.", Color.RED));
+            return null;
         }
 
         String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
         String receiptFileName = RECEIPTS_DIR + "/receipt_" + saleId + "_" + timestamp + ".txt";
+        String receiptContent = buildReceiptContent(saleId, lines, grandTotal);
 
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(receiptFileName))) {
-            writer.write("----- DrickSys Receipt -----\n");
-            writer.write("Sale ID: " + saleId + "\n");
-            writer.write("Date: " + dateFormatter.format(new Date()) + "\n");
-            writer.write("------------------------------\n");
-            for (CartLine line : lines) {
-                int row = findInventoryRowByName(line.itemName);
-                int lineRemainingQuantity = row >= 0 ? ((Number) tableModel.getValueAt(row, 2)).intValue() : 0;
-                writer.write(line.itemName + " x" + line.quantity
-                        + " @ PHP " + String.format("%.2f", line.unitPrice)
-                        + " = PHP " + String.format("%.2f", line.subtotal()) + "\n");
-                writer.write("Remaining Stock: " + lineRemainingQuantity + "\n");
-            }
-            writer.write("------------------------------\n");
-            writer.write("Grand Total: PHP " + String.format("%.2f", grandTotal) + "\n");
-            writer.write("------------------------------\n");
-            writer.write("Thank you for your order!\n");
+            writer.write(receiptContent);
 
             SwingUtilities.invokeLater(() -> updateStatusBar("Receipt generated: " + receiptFileName, PRIMARY_COLOR.darker()));
+            return receiptFileName;
         } catch (IOException e) {
             System.err.println("Error generating receipt: " + e.getMessage());
             SwingUtilities.invokeLater(() -> updateStatusBar("Error generating receipt.", Color.RED));
+            return null;
+        }
+    }
+
+    private String buildReceiptContent(String saleId, List<CartLine> lines, double grandTotal) {
+        StringBuilder receipt = new StringBuilder();
+        receipt.append("----- DrickSys Receipt -----\n");
+        receipt.append("Sale ID: ").append(saleId).append("\n");
+        receipt.append("Date: ").append(dateFormatter.format(new Date())).append("\n");
+        receipt.append("------------------------------\n");
+        for (CartLine line : lines) {
+            int row = findInventoryRowByName(line.itemName);
+            int lineRemainingQuantity = row >= 0 ? ((Number) tableModel.getValueAt(row, 2)).intValue() : 0;
+            receipt.append(line.itemName)
+                    .append(" x").append(line.quantity)
+                    .append(" @ PHP ").append(String.format("%.2f", line.unitPrice))
+                    .append(" = PHP ").append(String.format("%.2f", line.subtotal()))
+                    .append("\n");
+            receipt.append("Remaining Stock: ").append(lineRemainingQuantity).append("\n");
+        }
+        receipt.append("------------------------------\n");
+        receipt.append("Grand Total: PHP ").append(String.format("%.2f", grandTotal)).append("\n");
+        receipt.append("------------------------------\n");
+        receipt.append("Thank you for your order!\n");
+        return receipt.toString();
+    }
+
+    private void promptReceiptPrinting(String saleId, List<CartLine> lines, double grandTotal, String receiptPath) {
+        int option = JOptionPane.showConfirmDialog(
+                this,
+                "Sale completed.\nTotal: PHP " + String.format("%.2f", grandTotal)
+                        + "\nReceipt saved to: " + receiptPath
+                        + "\n\nPrint receipt now?",
+                "Checkout Complete",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.INFORMATION_MESSAGE
+        );
+
+        if (option == JOptionPane.YES_OPTION) {
+            printReceipt(saleId, lines, grandTotal);
+        }
+    }
+
+    private void printReceipt(String saleId, List<CartLine> lines, double grandTotal) {
+        JTextArea receiptArea = new JTextArea(buildReceiptContent(saleId, lines, grandTotal));
+        receiptArea.setEditable(false);
+        receiptArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+        try {
+            boolean printed = receiptArea.print();
+            if (printed) {
+                updateStatusBar("Receipt sent to printer.", PRIMARY_COLOR.darker());
+            } else {
+                updateStatusBar("Receipt printing was cancelled.", Color.GRAY);
+            }
+        } catch (PrinterException e) {
+            JOptionPane.showMessageDialog(
+                    this,
+                    "Receipt printing failed: " + e.getMessage(),
+                    "Print Error",
+                    JOptionPane.ERROR_MESSAGE
+            );
+            updateStatusBar("Receipt printing failed.", Color.RED);
         }
     }
 
@@ -3127,11 +3168,6 @@ public class DrickSysApp extends JFrame {
     private void handleGenerateReportAction(ActionEvent event) {
         event.getSource();
         generateReport();
-    }
-
-    private void handleShowOrderDialogAction(ActionEvent event) {
-        event.getSource();
-        showOrderDialog();
     }
 
     private void handleShowActivityLogsAction(ActionEvent event) {

@@ -1,4 +1,13 @@
 Sale ID,Timestamp,Items,Units,Total,Details,Sync Status,Cloud Sale ID
+CLOUD-14,2026-03-07 00:00:00,Zues x6,6,414.0,"Sale ID: CLOUD-14
+Timestamp: 2026-03-07 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 14
+
+Zues x6 @ PHP 69.00 = PHP 414.00
+
+Units: 6
+Total: PHP 414.00",Cloud Imported,14
 CLOUD-13,2026-03-07 00:00:00,"mark x1, Natchos x1, 67 x1, hi x1",4,307.0,"Sale ID: CLOUD-13
 Timestamp: 2026-03-07 00:00:00
 Sync: Cloud Imported

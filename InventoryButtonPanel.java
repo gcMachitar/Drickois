@@ -9,6 +9,7 @@ import javax.swing.*;
 import javax.swing.border.TitledBorder;
 
 public class InventoryButtonPanel extends JPanel {
+    private static final long serialVersionUID = 1L;
 
     private static final Color SECONDARY_COLOR = new Color(220, 240, 210);
     private static final Color BORDER_COLOR = new Color(101, 67, 33);
@@ -22,8 +23,9 @@ public class InventoryButtonPanel extends JPanel {
     private static final Color GENERATE_REPORT_COLOR = new Color(173, 216, 230);
 
 
-    private final Map<String, JButton> buttons;
+    private final transient Map<String, JButton> buttons;
 
+    @SuppressWarnings("this-escape")
     public InventoryButtonPanel(ActionListener addListener, ActionListener updateListener,
                                 ActionListener deleteListener, ActionListener clearListener,
                                 ActionListener generateReportListener) {
