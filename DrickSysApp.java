@@ -1,7 +1,7 @@
 import java.awt.*;
 import java.awt.event.*;
-import java.io.*;
 import java.awt.print.PrinterException;
+import java.io.*;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -54,6 +54,8 @@ public class DrickSysApp extends JFrame {
 
     private final SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
     private static final String INVENTORY_FILE = "inventory.csv";
+    private static final String PRODUCTS_FILE = "products.csv";
+    private static final String RECIPES_FILE = "product_recipes.csv";
     private static final String INVENTORY_TEXT_BACKUP_FILE = "inventory_backup.txt";
     private static final String SALES_HISTORY_FILE = "sales_history.csv";
     private static final String SALES_TEXT_BACKUP_FILE = "sales_backup.txt";
@@ -62,10 +64,15 @@ public class DrickSysApp extends JFrame {
     private static final String DEFAULT_ITEM_NAME_PLACEHOLDER = "e.g., Cafe Latte";
     private static final String DEFAULT_QUANTITY_PLACEHOLDER = "e.g., 25";
     private static final String DEFAULT_PRICE_PLACEHOLDER = "e.g., 125.50";
+    private static final String[] INVENTORY_CATEGORIES = {
+            "Coffee", "Drinks", "Sweet Delights", "Snacks", "Pastries",
+            "Ingredient", "Kitchen Stock", "Packaging", "Cleaning Supply", "Other"
+    };
 
     private static final String ADD_ITEM_TEXT = "Add Item";
     private static final String ACTIVITY_LOGS_TEXT = "Activity Logs";
     private static final String INVENTORY_HUB_TEXT = "Inventory";
+    private static final String PRODUCTS_TEXT = "Products";
     private static final String SUPPLIER_TEXT = "Suppliers";
     private static final String EXPIRATION_TEXT = "Expirations";
     private static final String INGREDIENTS_TEXT = "Ingredients";
@@ -86,6 +93,8 @@ public class DrickSysApp extends JFrame {
     private final transient ExecutorService executorService = Executors.newSingleThreadExecutor();
     private final transient List<SaleSummary> recentSales = new ArrayList<>();
     private final transient List<SaleSummary> salesHistory = new ArrayList<>();
+    private final transient List<ProductDefinition> productCatalog = new ArrayList<>();
+    private final transient Map<String, List<RecipeLine>> productRecipes = new LinkedHashMap<>();
     private boolean cloudConnected;
     private boolean cloudDisconnectDialogShown;
     private int sessionSalesCount;
@@ -162,7 +171,7 @@ public class DrickSysApp extends JFrame {
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
-                saveInventory();
+                persistAllData();
                 dispose();
             }
         });
@@ -171,22 +180,22 @@ public class DrickSysApp extends JFrame {
 
         initializePosModels();
 
+        int localInventoryRows = loadInventoryFromLocalFile();
+        if (localInventoryRows == 0) {
+            File inventoryFile = new File(INVENTORY_FILE);
+            if (!inventoryFile.exists()) {
+                System.out.println("Inventory file not found. Starting with empty inventory.");
+            }
+        }
+        loadProducts();
+        loadRecipes();
+        loadSalesHistoryFromLocalFile();
+
         JPanel mainPanel = new JPanel(new BorderLayout(10, 10));
         mainPanel.setBackground(SECONDARY_COLOR);
         mainPanel.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
 
-        JPanel centerContentPanel = new JPanel();
-        centerContentPanel.setLayout(new BoxLayout(centerContentPanel, BoxLayout.Y_AXIS));
-        centerContentPanel.setBackground(SECONDARY_COLOR);
-        centerContentPanel.add(createDashboardPanel());
-        centerContentPanel.add(Box.createRigidArea(new Dimension(0, 10)));
-        centerContentPanel.add(createInputPanel());
-        centerContentPanel.add(Box.createRigidArea(new Dimension(0, 10)));
-        centerContentPanel.add(createSearchAndTablePanel());
-        centerContentPanel.add(Box.createRigidArea(new Dimension(0, 10)));
-        centerContentPanel.add(createStatusBarPanel());
-
-        mainPanel.add(centerContentPanel, BorderLayout.CENTER);
+        mainPanel.add(createInventoryWorkspacePanel(), BorderLayout.CENTER);
         mainPanel.add(createSidebarPanel(), BorderLayout.WEST);
         mainPanel.add(createPosPanel(), BorderLayout.EAST);
 
@@ -196,8 +205,6 @@ public class DrickSysApp extends JFrame {
         setupTablePopupMenu();
         setupSearch();
 
-        loadInventory();
-        loadSalesHistory();
         updateTotalQuantity();
         setupTableColumns();
         refreshPosItemChoices();
@@ -209,11 +216,18 @@ public class DrickSysApp extends JFrame {
                 getRootPane().setDefaultButton(addButtonReference);
             }
             pack();
+            setMinimumSize(new Dimension(1220, 760));
+            Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
+            int targetWidth = Math.min(1480, Math.max(1220, screenSize.width - 160));
+            int targetHeight = Math.min(920, Math.max(760, screenSize.height - 140));
+            setSize(targetWidth, targetHeight);
+            setLocationRelativeTo(null);
+            startInitialCloudSync();
         });
     }
 
     private void initializeTable() {
-        String[] columnNames = {"Item Name", "Category", "Quantity", "Price (₱)", "Date Added", "Date Updated"};
+        String[] columnNames = {"Item Name", "Category", "Quantity", "Date Added", "Date Updated"};
         tableModel = new DefaultTableModel(columnNames, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -224,8 +238,7 @@ public class DrickSysApp extends JFrame {
             public Class<?> getColumnClass(int column) {
                 return switch (column) {
                     case 2 -> Integer.class;
-                    case 3 -> Double.class;
-                    case 4, 5 -> String.class;
+                    case 3, 4 -> String.class;
                     default -> String.class;
                 };
             }
@@ -252,7 +265,6 @@ public class DrickSysApp extends JFrame {
         inventoryTable.getColumnModel().getColumn(2).setCellRenderer(new LowQuantityRenderer());
         inventoryTable.getColumnModel().getColumn(3).setCellRenderer(centerRenderer);
         inventoryTable.getColumnModel().getColumn(4).setCellRenderer(centerRenderer);
-        inventoryTable.getColumnModel().getColumn(5).setCellRenderer(centerRenderer);
     }
 
     private void initializePosModels() {
@@ -563,8 +575,7 @@ public class DrickSysApp extends JFrame {
         gbc.weightx = 1.0;
 
         itemNameField = createStyledTextField(DEFAULT_ITEM_NAME_PLACEHOLDER);
-        String[] initialCategories = {"Coffee", "Drinks", "Sweet Delights", "Snacks", "Pastries", "Other"};
-        itemCategoryField = createStyledComboBox(initialCategories);
+        itemCategoryField = createStyledComboBox(INVENTORY_CATEGORIES);
         itemQuantityField = createStyledTextField(DEFAULT_QUANTITY_PLACEHOLDER);
         itemPriceField = createStyledTextField(DEFAULT_PRICE_PLACEHOLDER);
 
@@ -658,6 +669,75 @@ public class DrickSysApp extends JFrame {
         return panel;
     }
 
+    private JPanel createStockInputPanel() {
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(SECONDARY_COLOR);
+        panel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER_COLOR, 2),
+                BorderFactory.createEmptyBorder(15, 15, 15, 15)
+        ));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(4, 4, 4, 4);
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+
+        itemNameField = createStyledTextField(DEFAULT_ITEM_NAME_PLACEHOLDER);
+        itemCategoryField = createStyledComboBox(INVENTORY_CATEGORIES);
+        itemQuantityField = createStyledTextField(DEFAULT_QUANTITY_PLACEHOLDER);
+
+        int row = 0;
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.weightx = 0;
+        panel.add(new JLabel("Item Name:"), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        panel.add(itemNameField, gbc);
+
+        row++;
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.weightx = 0;
+        panel.add(new JLabel("Category:"), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        panel.add(itemCategoryField, gbc);
+
+        row++;
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.weightx = 0;
+        panel.add(new JLabel("Quantity:"), gbc);
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        panel.add(itemQuantityField, gbc);
+
+        row++;
+
+        gbc.gridx = 0;
+        gbc.gridy = row;
+        gbc.gridwidth = 2;
+        gbc.anchor = GridBagConstraints.CENTER;
+        gbc.fill = GridBagConstraints.NONE;
+
+        InventoryButtonPanel buttonPanel = new InventoryButtonPanel(
+                this::handleAddItemAction,
+                this::handleUpdateItemAction,
+                this::handleDeleteItemAction,
+                this::handleClearFieldsAction,
+                this::handleGenerateReportAction
+        );
+        panel.add(buttonPanel, gbc);
+
+        this.addButtonReference = buttonPanel.getButton(ADD_ITEM_TEXT);
+
+        return panel;
+    }
+
     private JPanel createStatusBarPanel() {
         JPanel panel = new JPanel(new BorderLayout(5, 0));
         panel.setBackground(SECONDARY_COLOR);
@@ -685,7 +765,59 @@ public class DrickSysApp extends JFrame {
         return panel;
     }
 
+    private JPanel createStockManagementPanel() {
+        JPanel panel = new JPanel(new BorderLayout(0, 10));
+        panel.setBackground(SECONDARY_COLOR);
+
+        JPanel topPanel = new JPanel();
+        topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
+        topPanel.setBackground(SECONDARY_COLOR);
+
+        JPanel dashboardPanel = createDashboardPanel();
+        dashboardPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        dashboardPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, dashboardPanel.getPreferredSize().height));
+
+        JPanel inputPanel = createStockInputPanel();
+        inputPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        inputPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, inputPanel.getPreferredSize().height));
+
+        topPanel.add(dashboardPanel);
+        topPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+        topPanel.add(inputPanel);
+
+        panel.add(topPanel, BorderLayout.NORTH);
+        panel.add(createSearchAndTablePanel(), BorderLayout.CENTER);
+        panel.add(createStatusBarPanel(), BorderLayout.SOUTH);
+        return panel;
+    }
+
+    private JComponent createInventoryWorkspacePanel() {
+        JTabbedPane tabs = new JTabbedPane();
+        tabs.setFont(HEADER_FONT.deriveFont(Font.BOLD, 15f));
+        tabs.setBackground(SECONDARY_COLOR);
+        tabs.setUI(new javax.swing.plaf.basic.BasicTabbedPaneUI() {
+            @Override
+            protected int calculateTabHeight(int tabPlacement, int tabIndex, int fontHeight) {
+                return super.calculateTabHeight(tabPlacement, tabIndex, fontHeight) + 10;
+            }
+
+            @Override
+            protected int calculateTabWidth(int tabPlacement, int tabIndex, FontMetrics metrics) {
+                return super.calculateTabWidth(tabPlacement, tabIndex, metrics) + 24;
+            }
+        });
+        tabs.addTab("Stock", createStockManagementPanel());
+        tabs.addTab("Products & Recipes", createProductsWorkspaceTab(this));
+        tabs.addTab("Suppliers", createSuppliersWorkspaceTab(this));
+        tabs.addTab("Expirations", createExpirationsWorkspaceTab(this));
+        tabs.addTab("Stock Out", createStockOutWorkspaceTab(this));
+        return tabs;
+    }
+
     private void updateStatusBar(String message, Color color) {
+        if (statusBarLabel == null) {
+            return;
+        }
         statusBarLabel.setText(message);
         statusBarLabel.setForeground(color);
     }
@@ -768,11 +900,6 @@ public class DrickSysApp extends JFrame {
         JButton logsButton = createSidebarButton("/resources/generatereportIcon.png", ACTIVITY_LOGS_TEXT);
         logsButton.addActionListener(this::handleShowActivityLogsAction);
         sidebar.add(logsButton);
-        sidebar.add(Box.createVerticalStrut(10));
-
-        JButton inventoryButton = createSidebarButton("/resources/additemIcon.png", INVENTORY_HUB_TEXT);
-        inventoryButton.addActionListener(this::handleShowInventoryHubDialogAction);
-        sidebar.add(inventoryButton);
         sidebar.add(Box.createVerticalStrut(10));
 
         JButton exportTxtButton = createSidebarButton("/resources/updateitemIcon.png", "Export TXT Backup");
@@ -915,8 +1042,8 @@ public class DrickSysApp extends JFrame {
         }
         Object selected = posItemField.getSelectedItem();
         posItemField.removeAllItems();
-        for (int i = 0; i < tableModel.getRowCount(); i++) {
-            posItemField.addItem(String.valueOf(tableModel.getValueAt(i, 0)));
+        for (ProductDefinition product : productCatalog) {
+            posItemField.addItem(product.productName);
         }
         if (selected != null) {
             posItemField.setSelectedItem(selected);
@@ -924,6 +1051,15 @@ public class DrickSysApp extends JFrame {
         if (posItemField.getSelectedIndex() == -1 && posItemField.getItemCount() > 0) {
             posItemField.setSelectedIndex(0);
         }
+    }
+
+    private ProductDefinition findProductByName(String productName) {
+        for (ProductDefinition product : productCatalog) {
+            if (product.productName.equalsIgnoreCase(productName)) {
+                return product;
+            }
+        }
+        return null;
     }
 
     private int findInventoryRowByName(String itemName) {
@@ -945,27 +1081,123 @@ public class DrickSysApp extends JFrame {
         return reserved;
     }
 
+    private boolean isSellableCategory(String category) {
+        if (category == null) {
+            return false;
+        }
+        String normalized = category.trim().toLowerCase();
+        return !normalized.equals("ingredient")
+                && !normalized.equals("kitchen stock")
+                && !normalized.equals("packaging")
+                && !normalized.equals("cleaning supply");
+    }
+
+    private double parseItemPrice(String rawPrice, String category) {
+        String normalizedPrice = rawPrice == null ? "" : rawPrice.trim();
+        boolean placeholder = normalizedPrice.isEmpty() || normalizedPrice.equals(DEFAULT_PRICE_PLACEHOLDER);
+        if (placeholder && !isSellableCategory(category)) {
+            return 0.0;
+        }
+        if (placeholder) {
+            throw new NumberFormatException("Missing price");
+        }
+        return Double.parseDouble(normalizedPrice);
+    }
+
+    private void removeCartLinesForItem(String itemName) {
+        for (int i = cartTableModel.getRowCount() - 1; i >= 0; i--) {
+            if (String.valueOf(cartTableModel.getValueAt(i, 0)).equalsIgnoreCase(itemName)) {
+                cartTableModel.removeRow(i);
+            }
+        }
+        updateCartSummary();
+    }
+
+    private void showLocalInventorySnapshotDialog() {
+        JDialog dialog = new JDialog(this, "Local Inventory", true);
+        dialog.setLayout(new BorderLayout(8, 8));
+        dialog.getContentPane().setBackground(SECONDARY_COLOR);
+
+        JLabel notice = new JLabel("Cloud is offline. Showing locally saved inventory only.");
+        notice.setBorder(BorderFactory.createEmptyBorder(10, 10, 0, 10));
+        notice.setForeground(new Color(180, 90, 0));
+        notice.setFont(MAIN_FONT.deriveFont(Font.BOLD));
+        dialog.add(notice, BorderLayout.NORTH);
+
+        DefaultTableModel snapshotModel = new DefaultTableModel(
+                new String[]{"Item Name", "Category", "Quantity", "Date Added", "Date Updated"},
+                0
+        ) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            snapshotModel.addRow(new Object[]{
+                    tableModel.getValueAt(i, 0),
+                    tableModel.getValueAt(i, 1),
+                    tableModel.getValueAt(i, 2),
+                    tableModel.getValueAt(i, 3),
+                    tableModel.getValueAt(i, 4)
+            });
+        }
+
+        JTable snapshotTable = createWorkspaceTable(snapshotModel);
+        dialog.add(new JScrollPane(snapshotTable), BorderLayout.CENTER);
+
+        JButton closeButton = createDialogActionButton("Close");
+        closeButton.addActionListener(event -> dialog.dispose());
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        actions.setBackground(SECONDARY_COLOR);
+        actions.add(closeButton);
+        dialog.add(actions, BorderLayout.SOUTH);
+
+        dialog.setSize(900, 420);
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+    }
+
     private void addSelectedItemToCart() {
         if (posItemField == null || posItemField.getItemCount() == 0) {
-            JOptionPane.showMessageDialog(this, "No inventory items are available for checkout.", "POS", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, "No products are available for checkout.", "POS", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
         String itemName = String.valueOf(posItemField.getSelectedItem());
+        ProductDefinition product = findProductByName(itemName);
+        if (product == null) {
+            JOptionPane.showMessageDialog(this, "Selected product was not found.", "POS", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
         int quantity = ((Number) posQuantitySpinner.getValue()).intValue();
-        int inventoryRow = findInventoryRowByName(itemName);
-        if (inventoryRow < 0) {
-            JOptionPane.showMessageDialog(this, "Selected item was not found in inventory.", "POS", JOptionPane.ERROR_MESSAGE);
+        List<RecipeLine> recipeLines = productRecipes.getOrDefault(product.productName, new ArrayList<>());
+        if (recipeLines.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "This product has no ingredient recipe yet.", "POS", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        int available = ((Number) tableModel.getValueAt(inventoryRow, 2)).intValue() - getQuantityReservedInCart(itemName);
-        if (quantity > available) {
-            JOptionPane.showMessageDialog(this, "Only " + Math.max(available, 0) + " unit(s) are still available for this sale.", "Insufficient Stock", JOptionPane.WARNING_MESSAGE);
-            return;
+        for (RecipeLine recipeLine : recipeLines) {
+            int inventoryRow = findInventoryRowByName(recipeLine.itemName);
+            if (inventoryRow < 0) {
+                JOptionPane.showMessageDialog(this, "Missing inventory item for recipe: " + recipeLine.itemName, "POS", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            int needed = recipeLine.quantityNeeded * quantity;
+            int available = ((Number) tableModel.getValueAt(inventoryRow, 2)).intValue() - getReservedIngredientQuantity(recipeLine.itemName);
+            if (needed > available) {
+                JOptionPane.showMessageDialog(
+                        this,
+                        recipeLine.itemName + " only has " + Math.max(available, 0) + " unit(s) available for this sale.",
+                        "Insufficient Stock",
+                        JOptionPane.WARNING_MESSAGE
+                );
+                return;
+            }
         }
 
-        double price = ((Number) tableModel.getValueAt(inventoryRow, 3)).doubleValue();
+        double price = product.unitPrice;
         cartTableModel.addRow(new Object[]{itemName, quantity, price, quantity * price});
         updateCartSummary();
         updateStatusBar("Added " + quantity + " x " + itemName + " to the current sale.", PRIMARY_COLOR.darker());
@@ -993,13 +1225,13 @@ public class DrickSysApp extends JFrame {
         Map<String, CartLine> merged = new LinkedHashMap<>();
         for (int i = 0; i < cartTableModel.getRowCount(); i++) {
             String itemName = String.valueOf(cartTableModel.getValueAt(i, 0));
-            int inventoryRow = findInventoryRowByName(itemName);
-            if (inventoryRow < 0) {
+            ProductDefinition product = findProductByName(itemName);
+            if (product == null) {
                 continue;
             }
             int quantity = ((Number) cartTableModel.getValueAt(i, 1)).intValue();
             double unitPrice = ((Number) cartTableModel.getValueAt(i, 2)).doubleValue();
-            String category = String.valueOf(tableModel.getValueAt(inventoryRow, 1));
+            String category = product.category;
             CartLine existing = merged.get(itemName);
             if (existing == null) {
                 merged.put(itemName, new CartLine(itemName, category, quantity, unitPrice));
@@ -1008,6 +1240,19 @@ public class DrickSysApp extends JFrame {
             }
         }
         return new ArrayList<>(merged.values());
+    }
+
+    private int getReservedIngredientQuantity(String itemName) {
+        int reserved = 0;
+        for (CartLine line : buildCartLines()) {
+            List<RecipeLine> recipeLines = productRecipes.getOrDefault(line.itemName, new ArrayList<>());
+            for (RecipeLine recipeLine : recipeLines) {
+                if (recipeLine.itemName.equalsIgnoreCase(itemName)) {
+                    reserved += recipeLine.quantityNeeded * line.quantity;
+                }
+            }
+        }
+        return reserved;
     }
 
     private void updateCartSummary() {
@@ -1048,6 +1293,7 @@ public class DrickSysApp extends JFrame {
             recentSalesTableModel.addRow(new Object[]{sale.saleId, sale.timestamp, sale.items, sale.units, sale.total});
         }
         recalculateDailySalesSummary();
+        saveSalesHistory();
     }
 
     private void handleRecentSaleTableClick(MouseEvent event) {
@@ -1162,6 +1408,13 @@ public class DrickSysApp extends JFrame {
         }
     }
 
+    private void queueCloudOperation(String actionLabel, CloudOperation operation) {
+        if (!isCloudConfigured()) {
+            return;
+        }
+        executorService.submit(() -> runCloudOperation(actionLabel, operation));
+    }
+
     private String csvEscape(Object value) {
         String text = value == null ? "" : String.valueOf(value);
         if (text.contains("\"")) {
@@ -1269,6 +1522,12 @@ public class DrickSysApp extends JFrame {
     }
 
     private void loadSalesHistory() {
+        loadSalesHistoryFromLocalFile();
+        mergeCloudSalesHistory();
+        recalculateDailySalesSummary();
+    }
+
+    private void loadSalesHistoryFromLocalFile() {
         salesHistory.clear();
         recentSales.clear();
 
@@ -1313,8 +1572,77 @@ public class DrickSysApp extends JFrame {
         for (SaleSummary sale : recentSales) {
             recentSalesTableModel.addRow(new Object[]{sale.saleId, sale.timestamp, sale.items, sale.units, sale.total});
         }
-        mergeCloudSalesHistory();
-        recalculateDailySalesSummary();
+    }
+
+    private void startInitialCloudSync() {
+        if (!isCloudConfigured()) {
+            return;
+        }
+
+        executorService.submit(() -> {
+            refreshInventoryFromCloudInBackground();
+            mergeCloudSalesHistoryInBackground();
+        });
+    }
+
+    private void refreshInventoryFromCloudInBackground() {
+        try {
+            List<SupabaseClient.InventoryRecord> cloudRecords = supabaseClient.fetchInventory(session);
+            SwingUtilities.invokeLater(() -> applyCloudInventoryRecords(cloudRecords));
+        } catch (IOException | InterruptedException e) {
+            SwingUtilities.invokeLater(() -> {
+                cloudConnected = false;
+                updateCloudStatusIndicator();
+                updateStatusBar("Cloud load failed, using local backup.", Color.ORANGE);
+            });
+        }
+    }
+
+    private void applyCloudInventoryRecords(List<SupabaseClient.InventoryRecord> cloudRecords) {
+        Map<String, String[]> dateCache = buildInventoryDateCache();
+        tableModel.setRowCount(0);
+        for (SupabaseClient.InventoryRecord record : cloudRecords) {
+            String[] cachedDates = dateCache.get(normalizeInventoryKey(record.getItemName()));
+            tableModel.addRow(new Object[]{
+                    record.getItemName(),
+                    record.getCategory(),
+                    record.getQuantity(),
+                    normalizeInventoryDate(record.getDateAdded(), cachedDates == null ? "" : cachedDates[0]),
+                    normalizeInventoryDate(record.getDateUpdated(), cachedDates == null ? "" : cachedDates[1])
+            });
+        }
+        cloudConnected = true;
+        cloudDisconnectDialogShown = false;
+        updateCloudStatusIndicator();
+        if (tableModel.getRowCount() == 0) {
+            int localRows = loadInventoryFromLocalFile();
+            if (localRows > 0) {
+                updateStatusBar("Cloud inventory is empty. Showing local backup items.", Color.ORANGE.darker());
+                refreshPosItemChoices();
+                updateTotalQuantity();
+                return;
+            }
+        }
+        saveInventory();
+        refreshPosItemChoices();
+        updateTotalQuantity();
+        updateStatusBar("Inventory loaded from cloud.", PRIMARY_COLOR.darker());
+    }
+
+    private void mergeCloudSalesHistoryInBackground() {
+        if (!isCloudConfigured() || supabaseClient == null || session == null) {
+            return;
+        }
+
+        try {
+            List<SupabaseClient.SaleHistoryLineRecord> lines = supabaseClient.fetchSalesHistory(session);
+            SwingUtilities.invokeLater(() -> mergeCloudSalesHistory(lines));
+        } catch (IOException | InterruptedException e) {
+            SwingUtilities.invokeLater(() -> {
+                cloudConnected = false;
+                updateCloudStatusIndicator();
+            });
+        }
     }
 
     private void mergeCloudSalesHistory() {
@@ -1323,51 +1651,56 @@ public class DrickSysApp extends JFrame {
         }
 
         try {
-            Map<Long, List<SupabaseClient.SaleHistoryLineRecord>> groupedLines = new LinkedHashMap<>();
-            for (SupabaseClient.SaleHistoryLineRecord line : supabaseClient.fetchSalesHistory(session)) {
-                if (line.getSaleId() <= 0) {
-                    continue;
-                }
-                groupedLines.computeIfAbsent(line.getSaleId(), saleId -> new ArrayList<>()).add(line);
-            }
-
-            boolean changed = false;
-            for (Map.Entry<Long, List<SupabaseClient.SaleHistoryLineRecord>> entry : groupedLines.entrySet()) {
-                String cloudSaleId = String.valueOf(entry.getKey());
-                boolean exists = false;
-                for (SaleSummary existing : salesHistory) {
-                    if (cloudSaleId.equals(existing.cloudSaleId)) {
-                        exists = true;
-                        break;
-                    }
-                }
-                if (exists) {
-                    continue;
-                }
-
-                SaleSummary imported = buildSaleSummaryFromCloud(cloudSaleId, entry.getValue());
-                if (imported != null) {
-                    salesHistory.add(imported);
-                    changed = true;
-                }
-            }
-
-            if (changed) {
-                salesHistory.sort((left, right) -> right.timestamp.compareTo(left.timestamp));
-                recentSales.clear();
-                for (int i = 0; i < Math.min(8, salesHistory.size()); i++) {
-                    recentSales.add(salesHistory.get(i));
-                }
-                recentSalesTableModel.setRowCount(0);
-                for (SaleSummary sale : recentSales) {
-                    recentSalesTableModel.addRow(new Object[]{sale.saleId, sale.timestamp, sale.items, sale.units, sale.total});
-                }
-                saveSalesHistory();
-            }
+            mergeCloudSalesHistory(supabaseClient.fetchSalesHistory(session));
         } catch (IOException | InterruptedException e) {
             cloudConnected = false;
             updateCloudStatusIndicator();
         }
+    }
+
+    private void mergeCloudSalesHistory(List<SupabaseClient.SaleHistoryLineRecord> cloudLines) {
+        Map<Long, List<SupabaseClient.SaleHistoryLineRecord>> groupedLines = new LinkedHashMap<>();
+        for (SupabaseClient.SaleHistoryLineRecord line : cloudLines) {
+            if (line.getSaleId() <= 0) {
+                continue;
+            }
+            groupedLines.computeIfAbsent(line.getSaleId(), saleId -> new ArrayList<>()).add(line);
+        }
+
+        boolean changed = false;
+        for (Map.Entry<Long, List<SupabaseClient.SaleHistoryLineRecord>> entry : groupedLines.entrySet()) {
+            String cloudSaleId = String.valueOf(entry.getKey());
+            boolean exists = false;
+            for (SaleSummary existing : salesHistory) {
+                if (cloudSaleId.equals(existing.cloudSaleId)) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) {
+                continue;
+            }
+
+            SaleSummary imported = buildSaleSummaryFromCloud(cloudSaleId, entry.getValue());
+            if (imported != null) {
+                salesHistory.add(imported);
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            salesHistory.sort((left, right) -> right.timestamp.compareTo(left.timestamp));
+            recentSales.clear();
+            for (int i = 0; i < Math.min(8, salesHistory.size()); i++) {
+                recentSales.add(salesHistory.get(i));
+            }
+            recentSalesTableModel.setRowCount(0);
+            for (SaleSummary sale : recentSales) {
+                recentSalesTableModel.addRow(new Object[]{sale.saleId, sale.timestamp, sale.items, sale.units, sale.total});
+            }
+            saveSalesHistory();
+        }
+        recalculateDailySalesSummary();
     }
 
     private SaleSummary buildSaleSummaryFromCloud(String cloudSaleId, List<SupabaseClient.SaleHistoryLineRecord> lines) {
@@ -1500,32 +1833,21 @@ public class DrickSysApp extends JFrame {
                 return;
             }
 
-            double price;
-            try {
-                price = Double.parseDouble(itemPriceField.getText().trim());
-                if (price < 0) {
-                    throw new NumberFormatException();
-                }
-            } catch (NumberFormatException e) {
-                JOptionPane.showMessageDialog(this, "Please enter a valid positive number for price.", "Input Error", JOptionPane.ERROR_MESSAGE);
-                updateStatusBar("Error: Invalid price.", Color.RED);
-                return;
-            }
-
+            double price = 0.0;
             String dateAdded = dateFormatter.format(new Date());
-            boolean cloudSynced = !isCloudConfigured() || runCloudOperation("add item", () ->
-                    supabaseClient.insertInventoryItem(session, itemName, itemCategory, quantity, price, dateAdded, "")
-            );
-            tableModel.addRow(new Object[]{itemName, itemCategory, quantity, price, dateAdded, ""});
+            tableModel.addRow(new Object[]{itemName, itemCategory, quantity, dateAdded, "-"});
             clearFields();
             updateTotalQuantity();
             refreshPosItemChoices();
             saveInventory();
-            logActionSafe("add_item", "Added: " + itemName + ", qty=" + quantity + ", price=" + price);
-            if (cloudSynced) {
-                updateStatusBar("Item '" + itemName + "' added and synced.", PRIMARY_COLOR.darker());
+            logActionSafe("add_item", "Added: " + itemName + ", qty=" + quantity);
+            if (isCloudConfigured()) {
+                queueCloudOperation("add item", () ->
+                        supabaseClient.insertInventoryItem(session, itemName, itemCategory, quantity, price, dateAdded, "", isSellableCategory(itemCategory))
+                );
+                updateStatusBar("Item '" + itemName + "' added. Cloud sync running in background.", PRIMARY_COLOR.darker());
             } else {
-                updateStatusBar("Item '" + itemName + "' added locally (offline mode).", Color.ORANGE.darker());
+                updateStatusBar("Item '" + itemName + "' added locally.", TEXT_COLOR);
             }
         } catch (RuntimeException e) {
             JOptionPane.showMessageDialog(this, "An unexpected error occurred: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -1546,7 +1868,6 @@ public class DrickSysApp extends JFrame {
         String itemName = itemNameField.getText().trim();
         String itemCategory = (String) itemCategoryField.getSelectedItem();
         int quantity;
-        double price;
 
         if (itemName.isEmpty() || itemName.equals(DEFAULT_ITEM_NAME_PLACEHOLDER)) {
             JOptionPane.showMessageDialog(this, "Please enter a valid item name.", "Input Error", JOptionPane.ERROR_MESSAGE);
@@ -1578,45 +1899,34 @@ public class DrickSysApp extends JFrame {
             return;
         }
 
-        try {
-            price = Double.parseDouble(itemPriceField.getText().trim());
-            if (price < 0) {
-                throw new NumberFormatException();
-            }
-        } catch (NumberFormatException e) {
-            JOptionPane.showMessageDialog(this, "Please enter a valid positive number for price.", "Input Error", JOptionPane.ERROR_MESSAGE);
-            updateStatusBar("Error: Invalid price.", Color.RED);
-            return;
-        }
-
+        double price = 0.0;
         String originalItemName = String.valueOf(tableModel.getValueAt(modelRow, 0));
         String updatedDate = dateFormatter.format(new Date());
-        boolean cloudSynced = !isCloudConfigured() || runCloudOperation("update item", () ->
-                supabaseClient.updateInventoryItemByName(
-                        session,
-                        originalItemName,
-                        itemName,
-                        itemCategory,
-                        quantity,
-                        price,
-                        updatedDate
-                )
-        );
-
         tableModel.setValueAt(itemName, modelRow, 0);
         tableModel.setValueAt(itemCategory, modelRow, 1);
         tableModel.setValueAt(quantity, modelRow, 2);
-        tableModel.setValueAt(price, modelRow, 3);
-        tableModel.setValueAt(updatedDate, modelRow, 5);
+        tableModel.setValueAt(updatedDate, modelRow, 4);
         clearFields();
         updateTotalQuantity();
         refreshPosItemChoices();
         saveInventory();
-        logActionSafe("update_item", "Updated: " + originalItemName + " -> " + itemName + ", qty=" + quantity + ", price=" + price);
-        if (cloudSynced) {
-            updateStatusBar("Item '" + itemName + "' updated and synced.", PRIMARY_COLOR.darker());
+        logActionSafe("update_item", "Updated: " + originalItemName + " -> " + itemName + ", qty=" + quantity);
+        if (isCloudConfigured()) {
+            queueCloudOperation("update item", () ->
+                    supabaseClient.updateInventoryItemByName(
+                            session,
+                            originalItemName,
+                            itemName,
+                            itemCategory,
+                            quantity,
+                            price,
+                            updatedDate,
+                            isSellableCategory(itemCategory)
+                    )
+            );
+            updateStatusBar("Item '" + itemName + "' updated. Cloud sync running in background.", PRIMARY_COLOR.darker());
         } else {
-            updateStatusBar("Item '" + itemName + "' updated locally (offline mode).", Color.ORANGE.darker());
+            updateStatusBar("Item '" + itemName + "' updated locally.", TEXT_COLOR);
         }
     }
 
@@ -1636,19 +1946,20 @@ public class DrickSysApp extends JFrame {
         if (confirm == JOptionPane.YES_OPTION) {
             int modelRow = inventoryTable.convertRowIndexToModel(selectedRow);
             String itemName = (String) tableModel.getValueAt(modelRow, 0);
-            boolean cloudSynced = !isCloudConfigured() || runCloudOperation("delete item", () ->
-                    supabaseClient.deleteInventoryItemByName(session, itemName)
-            );
             tableModel.removeRow(modelRow);
+            removeCartLinesForItem(itemName);
             clearFields();
             updateTotalQuantity();
             refreshPosItemChoices();
             saveInventory();
             logActionSafe("delete_item", "Deleted: " + itemName);
-            if (cloudSynced) {
-                updateStatusBar("Item '" + itemName + "' deleted and synced.", PRIMARY_COLOR.darker());
+            if (isCloudConfigured()) {
+                queueCloudOperation("delete item", () ->
+                        supabaseClient.deleteInventoryItemByName(session, itemName)
+                );
+                updateStatusBar("Item '" + itemName + "' deleted. Cloud sync running in background.", PRIMARY_COLOR.darker());
             } else {
-                updateStatusBar("Item '" + itemName + "' deleted locally (offline mode).", Color.ORANGE.darker());
+                updateStatusBar("Item '" + itemName + "' deleted locally.", TEXT_COLOR);
             }
         } else {
             updateStatusBar("Deletion cancelled.", Color.GRAY);
@@ -1661,8 +1972,6 @@ public class DrickSysApp extends JFrame {
         itemCategoryField.setSelectedIndex(0);
         itemQuantityField.setText(DEFAULT_QUANTITY_PLACEHOLDER);
         itemQuantityField.setForeground(Color.GRAY);
-        itemPriceField.setText(DEFAULT_PRICE_PLACEHOLDER);
-        itemPriceField.setForeground(Color.GRAY);
         inventoryTable.clearSelection();
         updateStatusBar("Fields cleared.", TEXT_COLOR);
     }
@@ -1791,22 +2100,32 @@ public class DrickSysApp extends JFrame {
     }
 
     private void loadInventory() {
+        Map<String, String[]> dateCache = buildInventoryDateCache();
         tableModel.setRowCount(0);
         if (isCloudConfigured()) {
             try {
-                for (SupabaseClient.InventoryRecord record : supabaseClient.fetchInventory(session)) {
+                List<SupabaseClient.InventoryRecord> cloudRecords = supabaseClient.fetchInventory(session);
+                for (SupabaseClient.InventoryRecord record : cloudRecords) {
+                    String[] cachedDates = dateCache.get(normalizeInventoryKey(record.getItemName()));
                     tableModel.addRow(new Object[]{
                             record.getItemName(),
                             record.getCategory(),
                             record.getQuantity(),
-                            record.getPrice(),
-                            record.getDateAdded(),
-                            record.getDateUpdated()
+                            normalizeInventoryDate(record.getDateAdded(), cachedDates == null ? "" : cachedDates[0]),
+                            normalizeInventoryDate(record.getDateUpdated(), cachedDates == null ? "" : cachedDates[1])
                     });
                 }
                 cloudConnected = true;
                 cloudDisconnectDialogShown = false;
                 updateCloudStatusIndicator();
+                if (tableModel.getRowCount() == 0) {
+                    int localRows = loadInventoryFromLocalFile();
+                    if (localRows > 0) {
+                        updateStatusBar("Cloud inventory is empty. Showing local backup items.", Color.ORANGE.darker());
+                        refreshPosItemChoices();
+                        return;
+                    }
+                }
                 saveInventory();
                 refreshPosItemChoices();
                 updateStatusBar("Inventory loaded from cloud.", PRIMARY_COLOR.darker());
@@ -1818,10 +2137,20 @@ public class DrickSysApp extends JFrame {
             }
         }
 
+        int localRows = loadInventoryFromLocalFile();
+        if (localRows == 0) {
+            File file = new File(INVENTORY_FILE);
+            if (!file.exists()) {
+                System.out.println("Inventory file not found. Starting with empty inventory.");
+            }
+        }
+    }
+
+    private int loadInventoryFromLocalFile() {
+        tableModel.setRowCount(0);
         File file = new File(INVENTORY_FILE);
         if (!file.exists()) {
-            System.out.println("Inventory file not found. Starting with empty inventory.");
-            return;
+            return 0;
         }
 
         try (Scanner scanner = new Scanner(file)) {
@@ -1831,16 +2160,28 @@ public class DrickSysApp extends JFrame {
             while (scanner.hasNextLine()) {
                 String line = scanner.nextLine();
                 List<String> parts = parseCsvLine(line);
-                if (parts.size() >= 6) {
+                if (parts.size() >= 5) {
                     try {
                         String name = parts.get(0);
                         String category = parts.get(1);
                         int quantity = Integer.parseInt(parts.get(2));
-                        double price = Double.parseDouble(parts.get(3));
-                        String dateAdded = parts.get(4);
-                        String dateUpdated = parts.get(5);
+                        String dateAdded;
+                        String dateUpdated;
+                        if (parts.size() >= 6) {
+                            dateAdded = parts.get(4);
+                            dateUpdated = parts.get(5);
+                        } else {
+                            dateAdded = parts.get(3);
+                            dateUpdated = parts.get(4);
+                        }
 
-                        tableModel.addRow(new Object[]{name, category, quantity, price, dateAdded, dateUpdated});
+                        tableModel.addRow(new Object[]{
+                                name,
+                                category,
+                                quantity,
+                                normalizeInventoryDate(dateAdded, ""),
+                                normalizeInventoryDate(dateUpdated, "")
+                        });
                     } catch (NumberFormatException e) {
                         System.err.println("Skipping malformed inventory line (number format error): " + line);
                     }
@@ -1850,10 +2191,12 @@ public class DrickSysApp extends JFrame {
             }
             refreshPosItemChoices();
             updateStatusBar("Inventory loaded successfully from " + INVENTORY_FILE, PRIMARY_COLOR.darker());
+            return tableModel.getRowCount();
         } catch (FileNotFoundException e) {
             System.err.println("Error loading inventory: " + e.getMessage());
             updateStatusBar("Error loading inventory.", Color.RED);
             LOGGER.log(Level.SEVERE, "Error loading inventory", e);
+            return 0;
         }
     }
 
@@ -1877,7 +2220,6 @@ public class DrickSysApp extends JFrame {
                 }
                 bw.newLine();
             }
-            saveSalesHistory();
             saveTextBackupSnapshot();
             System.out.println("Inventory saved successfully to " + INVENTORY_FILE);
             if (isCloudConfigured() && cloudConnected) {
@@ -1892,6 +2234,13 @@ public class DrickSysApp extends JFrame {
             updateStatusBar("Error saving inventory.", Color.RED);
             LOGGER.log(Level.SEVERE, "Error saving inventory", e);
         }
+    }
+
+    private void persistAllData() {
+        saveInventory();
+        saveProducts();
+        saveRecipes();
+        saveSalesHistory();
     }
 
     private void saveTextBackupSnapshot() {
@@ -1935,6 +2284,34 @@ public class DrickSysApp extends JFrame {
         }
     }
 
+    private Map<String, String[]> buildInventoryDateCache() {
+        Map<String, String[]> cache = new LinkedHashMap<>();
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            String itemName = String.valueOf(tableModel.getValueAt(i, 0));
+            cache.put(normalizeInventoryKey(itemName), new String[]{
+                    String.valueOf(tableModel.getValueAt(i, 3)),
+                    String.valueOf(tableModel.getValueAt(i, 4))
+            });
+        }
+        return cache;
+    }
+
+    private String normalizeInventoryKey(String itemName) {
+        return itemName == null ? "" : itemName.trim().toLowerCase();
+    }
+
+    private String normalizeInventoryDate(String value, String fallback) {
+        String normalized = value == null ? "" : value.trim();
+        if (!normalized.isEmpty() && !normalized.equalsIgnoreCase("null")) {
+            return normalized;
+        }
+        String fallbackValue = fallback == null ? "" : fallback.trim();
+        if (!fallbackValue.isEmpty() && !fallbackValue.equalsIgnoreCase("null")) {
+            return fallbackValue;
+        }
+        return "-";
+    }
+
     private void setupSearch() {
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             @Override
@@ -1974,11 +2351,9 @@ public class DrickSysApp extends JFrame {
                 itemNameField.setText((String) tableModel.getValueAt(selectedRow, 0));
                 itemCategoryField.setSelectedItem((String) tableModel.getValueAt(selectedRow, 1));
                 itemQuantityField.setText(String.valueOf(tableModel.getValueAt(selectedRow, 2)));
-                itemPriceField.setText(String.valueOf(tableModel.getValueAt(selectedRow, 3)));
 
                 itemNameField.setForeground(TEXT_COLOR);
                 itemQuantityField.setForeground(TEXT_COLOR);
-                itemPriceField.setForeground(TEXT_COLOR);
             }
         });
     }
@@ -1996,10 +2371,24 @@ public class DrickSysApp extends JFrame {
         int selectedRow = inventoryTable.getSelectedRow();
         if (selectedRow != -1) {
             int modelRow = inventoryTable.convertRowIndexToModel(selectedRow);
-            posItemField.setSelectedItem(String.valueOf(tableModel.getValueAt(modelRow, 0)));
+            ProductDefinition product = findProductByName(String.valueOf(tableModel.getValueAt(modelRow, 0)));
+            if (product != null) {
+                posItemField.setSelectedItem(product.productName);
+            }
         }
         posQuantitySpinner.requestFocusInWindow();
         updateStatusBar("POS is ready. Add items to the cart, then checkout once.", PRIMARY_COLOR.darker());
+    }
+
+    private Map<String, Integer> buildIngredientUsage(List<CartLine> lines) {
+        Map<String, Integer> usage = new LinkedHashMap<>();
+        for (CartLine line : lines) {
+            List<RecipeLine> recipeLines = productRecipes.getOrDefault(line.itemName, new ArrayList<>());
+            for (RecipeLine recipeLine : recipeLines) {
+                usage.merge(recipeLine.itemName, recipeLine.quantityNeeded * line.quantity, Integer::sum);
+            }
+        }
+        return usage;
     }
 
 
@@ -2010,15 +2399,23 @@ public class DrickSysApp extends JFrame {
             return;
         }
 
+        Map<String, Integer> ingredientUsage = buildIngredientUsage(lines);
         for (CartLine line : lines) {
-            int row = findInventoryRowByName(line.itemName);
+            if (productRecipes.getOrDefault(line.itemName, new ArrayList<>()).isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Recipe missing for product: " + line.itemName, "POS", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+
+        for (Map.Entry<String, Integer> entry : ingredientUsage.entrySet()) {
+            int row = findInventoryRowByName(entry.getKey());
             if (row < 0) {
-                JOptionPane.showMessageDialog(this, "Item missing from inventory: " + line.itemName, "POS", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(this, "Ingredient missing from inventory: " + entry.getKey(), "POS", JOptionPane.ERROR_MESSAGE);
                 return;
             }
             int available = ((Number) tableModel.getValueAt(row, 2)).intValue();
-            if (line.quantity > available) {
-                JOptionPane.showMessageDialog(this, line.itemName + " only has " + available + " unit(s) left.", "Insufficient Stock", JOptionPane.ERROR_MESSAGE);
+            if (entry.getValue() > available) {
+                JOptionPane.showMessageDialog(this, entry.getKey() + " only has " + available + " unit(s) left.", "Insufficient Stock", JOptionPane.ERROR_MESSAGE);
                 return;
             }
         }
@@ -2060,15 +2457,22 @@ public class DrickSysApp extends JFrame {
 
         final long[] cloudSaleIdHolder = {-1L};
         boolean cloudSynced = !isCloudConfigured() || runCloudOperation("checkout sale", () ->
-                cloudSaleIdHolder[0] = supabaseClient.placeSale(session, convertCartLinesToCloudItems(lines))
+        {
+            cloudSaleIdHolder[0] = supabaseClient.placeProductSale(session, convertCartLinesToCloudItems(lines));
+            for (Map.Entry<String, Integer> entry : ingredientUsage.entrySet()) {
+                int row = findInventoryRowByName(entry.getKey());
+                int newQuantity = ((Number) tableModel.getValueAt(row, 2)).intValue() - entry.getValue();
+                supabaseClient.updateInventoryQuantityByName(session, entry.getKey(), newQuantity);
+            }
+        }
         );
 
         String updatedAt = dateFormatter.format(new Date());
-        for (CartLine line : lines) {
-            int row = findInventoryRowByName(line.itemName);
-            int newQuantity = ((Number) tableModel.getValueAt(row, 2)).intValue() - line.quantity;
+        for (Map.Entry<String, Integer> entry : ingredientUsage.entrySet()) {
+            int row = findInventoryRowByName(entry.getKey());
+            int newQuantity = ((Number) tableModel.getValueAt(row, 2)).intValue() - entry.getValue();
             tableModel.setValueAt(newQuantity, row, 2);
-            tableModel.setValueAt(updatedAt, row, 5);
+            tableModel.setValueAt(updatedAt, row, 4);
         }
 
         updateTotalQuantity();
@@ -2096,7 +2500,7 @@ public class DrickSysApp extends JFrame {
         executorService.submit(() -> {
             String receiptPath = generateReceipt(receiptSaleId, receiptLines, receiptTotal);
             if (receiptPath != null) {
-                SwingUtilities.invokeLater(() -> promptReceiptPrinting(receiptSaleId, receiptLines, receiptTotal, receiptPath));
+                SwingUtilities.invokeLater(() -> showReceiptDialog(receiptSaleId, receiptLines, receiptTotal, receiptPath));
             }
         });
     }
@@ -2104,14 +2508,12 @@ public class DrickSysApp extends JFrame {
     private List<SupabaseClient.SaleItem> convertCartLinesToCloudItems(List<CartLine> lines) {
         List<SupabaseClient.SaleItem> items = new ArrayList<>();
         for (CartLine line : lines) {
-            int row = findInventoryRowByName(line.itemName);
-            int currentQuantity = ((Number) tableModel.getValueAt(row, 2)).intValue();
             items.add(new SupabaseClient.SaleItem(
                     line.itemName,
                     line.category,
                     line.quantity,
                     line.unitPrice,
-                    currentQuantity - line.quantity
+                    0
             ));
         }
         return items;
@@ -2140,6 +2542,123 @@ public class DrickSysApp extends JFrame {
         }
     }
 
+    private void loadProducts() {
+        productCatalog.clear();
+        File file = new File(PRODUCTS_FILE);
+        if (!file.exists()) {
+            return;
+        }
+
+        try (Scanner scanner = new Scanner(file)) {
+            if (scanner.hasNextLine()) {
+                scanner.nextLine();
+            }
+            while (scanner.hasNextLine()) {
+                List<String> parts = parseCsvLine(scanner.nextLine());
+                if (parts.size() < 3) {
+                    continue;
+                }
+                try {
+                    productCatalog.add(new ProductDefinition(
+                            parts.get(0),
+                            parts.get(1),
+                            Double.parseDouble(parts.get(2))
+                    ));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        } catch (FileNotFoundException e) {
+            LOGGER.log(Level.WARNING, "Products file unavailable", e);
+        }
+    }
+
+    private void saveProducts() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(PRODUCTS_FILE))) {
+            writer.write("Product Name,Category,Price");
+            writer.newLine();
+            for (ProductDefinition product : productCatalog) {
+                writer.write(csvEscape(product.productName));
+                writer.write(",");
+                writer.write(csvEscape(product.category));
+                writer.write(",");
+                writer.write(csvEscape(product.unitPrice));
+                writer.newLine();
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed writing products file", e);
+        }
+    }
+
+    private void loadRecipes() {
+        productRecipes.clear();
+        File file = new File(RECIPES_FILE);
+        if (!file.exists()) {
+            return;
+        }
+
+        try (Scanner scanner = new Scanner(file)) {
+            if (scanner.hasNextLine()) {
+                scanner.nextLine();
+            }
+            while (scanner.hasNextLine()) {
+                List<String> parts = parseCsvLine(scanner.nextLine());
+                if (parts.size() < 3) {
+                    continue;
+                }
+                try {
+                    RecipeLine line = new RecipeLine(parts.get(0), parts.get(1), Integer.parseInt(parts.get(2)));
+                    productRecipes.computeIfAbsent(line.productName, key -> new ArrayList<>()).add(line);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        } catch (FileNotFoundException e) {
+            LOGGER.log(Level.WARNING, "Recipes file unavailable", e);
+        }
+    }
+
+    private void saveRecipes() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(RECIPES_FILE))) {
+            writer.write("Product Name,Item Name,Quantity Needed");
+            writer.newLine();
+            for (Map.Entry<String, List<RecipeLine>> entry : productRecipes.entrySet()) {
+                for (RecipeLine line : entry.getValue()) {
+                    writer.write(csvEscape(line.productName));
+                    writer.write(",");
+                    writer.write(csvEscape(line.itemName));
+                    writer.write(",");
+                    writer.write(csvEscape(line.quantityNeeded));
+                    writer.newLine();
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed writing recipes file", e);
+        }
+    }
+
+    private static final class ProductDefinition {
+        private final String productName;
+        private final String category;
+        private final double unitPrice;
+
+        private ProductDefinition(String productName, String category, double unitPrice) {
+            this.productName = productName;
+            this.category = category;
+            this.unitPrice = unitPrice;
+        }
+    }
+
+    private static final class RecipeLine {
+        private final String productName;
+        private final String itemName;
+        private final int quantityNeeded;
+
+        private RecipeLine(String productName, String itemName, int quantityNeeded) {
+            this.productName = productName;
+            this.itemName = itemName;
+            this.quantityNeeded = quantityNeeded;
+        }
+    }
+
     private String buildReceiptContent(String saleId, List<CartLine> lines, double grandTotal) {
         StringBuilder receipt = new StringBuilder();
         receipt.append("----- DrickSys Receipt -----\n");
@@ -2147,14 +2666,11 @@ public class DrickSysApp extends JFrame {
         receipt.append("Date: ").append(dateFormatter.format(new Date())).append("\n");
         receipt.append("------------------------------\n");
         for (CartLine line : lines) {
-            int row = findInventoryRowByName(line.itemName);
-            int lineRemainingQuantity = row >= 0 ? ((Number) tableModel.getValueAt(row, 2)).intValue() : 0;
             receipt.append(line.itemName)
                     .append(" x").append(line.quantity)
                     .append(" @ PHP ").append(String.format("%.2f", line.unitPrice))
                     .append(" = PHP ").append(String.format("%.2f", line.subtotal()))
                     .append("\n");
-            receipt.append("Remaining Stock: ").append(lineRemainingQuantity).append("\n");
         }
         receipt.append("------------------------------\n");
         receipt.append("Grand Total: PHP ").append(String.format("%.2f", grandTotal)).append("\n");
@@ -2163,20 +2679,28 @@ public class DrickSysApp extends JFrame {
         return receipt.toString();
     }
 
-    private void promptReceiptPrinting(String saleId, List<CartLine> lines, double grandTotal, String receiptPath) {
-        int option = JOptionPane.showConfirmDialog(
+    private void showReceiptDialog(String saleId, List<CartLine> lines, double grandTotal, String receiptPath) {
+        JTextArea receiptArea = new JTextArea(buildReceiptContent(saleId, lines, grandTotal));
+        receiptArea.setEditable(false);
+        receiptArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        receiptArea.setLineWrap(false);
+        receiptArea.setWrapStyleWord(false);
+        receiptArea.setCaretPosition(0);
+
+        JScrollPane scrollPane = new JScrollPane(receiptArea);
+        scrollPane.setPreferredSize(new Dimension(460, 320));
+
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setBackground(SECONDARY_COLOR);
+        panel.add(new JLabel("Receipt saved to: " + receiptPath), BorderLayout.NORTH);
+        panel.add(scrollPane, BorderLayout.CENTER);
+
+        JOptionPane.showMessageDialog(
                 this,
-                "Sale completed.\nTotal: PHP " + String.format("%.2f", grandTotal)
-                        + "\nReceipt saved to: " + receiptPath
-                        + "\n\nPrint receipt now?",
-                "Checkout Complete",
-                JOptionPane.YES_NO_OPTION,
+                panel,
+                "Receipt Details",
                 JOptionPane.INFORMATION_MESSAGE
         );
-
-        if (option == JOptionPane.YES_OPTION) {
-            printReceipt(saleId, lines, grandTotal);
-        }
     }
 
     private void printReceipt(String saleId, List<CartLine> lines, double grandTotal) {
@@ -2246,9 +2770,327 @@ public class DrickSysApp extends JFrame {
         }
     }
 
+    private JPanel createProductsWorkspaceTab(Component parent) {
+        DefaultTableModel productModel = new DefaultTableModel(new String[]{"Product", "Category", "Price", "Recipe Items"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        DefaultTableModel recipeModel = new DefaultTableModel(new String[]{"Inventory Item", "Quantity Needed"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+
+        JTable productTable = createWorkspaceTable(productModel);
+        JTable recipeTable = createWorkspaceTable(recipeModel);
+        JScrollPane productScrollPane = new JScrollPane(productTable);
+        JScrollPane recipeScrollPane = new JScrollPane(recipeTable);
+        productScrollPane.setPreferredSize(new Dimension(0, 250));
+        recipeScrollPane.setPreferredSize(new Dimension(0, 220));
+
+        Runnable refreshProducts = () -> {
+            productModel.setRowCount(0);
+            for (ProductDefinition product : productCatalog) {
+                productModel.addRow(new Object[]{
+                        product.productName,
+                        product.category,
+                        product.unitPrice,
+                        productRecipes.getOrDefault(product.productName, new ArrayList<>()).size()
+                });
+            }
+            if (productModel.getRowCount() > 0) {
+                int selectedRow = productTable.getSelectedRow();
+                if (selectedRow < 0 || selectedRow >= productModel.getRowCount()) {
+                    productTable.setRowSelectionInterval(0, 0);
+                }
+            } else {
+                recipeModel.setRowCount(0);
+            }
+        };
+
+        Runnable refreshRecipes = () -> {
+            recipeModel.setRowCount(0);
+            int row = productTable.getSelectedRow();
+            if (row < 0) {
+                return;
+            }
+            String productName = String.valueOf(productModel.getValueAt(row, 0));
+            for (RecipeLine line : productRecipes.getOrDefault(productName, new ArrayList<>())) {
+                recipeModel.addRow(new Object[]{line.itemName, line.quantityNeeded});
+            }
+        };
+
+        refreshProducts.run();
+        productTable.getSelectionModel().addListSelectionListener(event -> {
+            if (!event.getValueIsAdjusting()) {
+                refreshRecipes.run();
+            }
+        });
+        refreshRecipes.run();
+
+        JButton addProductButton = createDialogActionButton("Add Product");
+        addProductButton.addActionListener(event -> {
+            JTextField nameField = new JTextField(18);
+            JComboBox<String> categoryField = createStyledComboBox(new String[]{"Milk Tea", "Coffee", "Drinks", "Snacks", "Pastries", "Other"});
+            JTextField priceField = new JTextField(18);
+            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
+            form.setBackground(SECONDARY_COLOR);
+            form.add(new JLabel("Product Name:")); form.add(nameField);
+            form.add(new JLabel("Category:")); form.add(categoryField);
+            form.add(new JLabel("Price:")); form.add(priceField);
+            if (JOptionPane.showConfirmDialog(parent, form, "Add Product", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+                return;
+            }
+            String name = nameField.getText().trim();
+            if (name.isEmpty()) {
+                JOptionPane.showMessageDialog(parent, "Product name is required.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (findProductByName(name) != null) {
+                JOptionPane.showMessageDialog(parent, "Product already exists.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            try {
+                double price = Double.parseDouble(priceField.getText().trim());
+                productCatalog.add(new ProductDefinition(name, String.valueOf(categoryField.getSelectedItem()), price));
+                saveProducts();
+                refreshProducts.run();
+                refreshPosItemChoices();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(parent, "Price must be numeric.", "Validation", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+
+        JButton editProductButton = createDialogActionButton("Edit Product");
+        editProductButton.addActionListener(event -> {
+            int row = productTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(parent, "Select a product to edit.", "No Selection", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String originalName = String.valueOf(productModel.getValueAt(row, 0));
+            ProductDefinition original = findProductByName(originalName);
+            if (original == null) {
+                return;
+            }
+            JTextField nameField = new JTextField(original.productName, 18);
+            JTextField categoryField = new JTextField(original.category, 18);
+            JTextField priceField = new JTextField(String.valueOf(original.unitPrice), 18);
+            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
+            form.setBackground(SECONDARY_COLOR);
+            form.add(new JLabel("Product Name:")); form.add(nameField);
+            form.add(new JLabel("Category:")); form.add(categoryField);
+            form.add(new JLabel("Price:")); form.add(priceField);
+            if (JOptionPane.showConfirmDialog(parent, form, "Edit Product", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+                return;
+            }
+            String updatedName = nameField.getText().trim();
+            if (updatedName.isEmpty()) {
+                JOptionPane.showMessageDialog(parent, "Product name is required.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (!originalName.equalsIgnoreCase(updatedName) && findProductByName(updatedName) != null) {
+                JOptionPane.showMessageDialog(parent, "Another product already uses that name.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            try {
+                double updatedPrice = Double.parseDouble(priceField.getText().trim());
+                productCatalog.remove(original);
+                productCatalog.add(new ProductDefinition(updatedName, categoryField.getText().trim(), updatedPrice));
+                List<RecipeLine> existingRecipe = productRecipes.remove(originalName);
+                if (existingRecipe != null) {
+                    List<RecipeLine> renamedRecipe = new ArrayList<>();
+                    for (RecipeLine line : existingRecipe) {
+                        renamedRecipe.add(new RecipeLine(updatedName, line.itemName, line.quantityNeeded));
+                    }
+                    productRecipes.put(updatedName, renamedRecipe);
+                }
+                saveProducts();
+                saveRecipes();
+                refreshProducts.run();
+                refreshPosItemChoices();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(parent, "Price must be numeric.", "Validation", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+
+        JButton deleteProductButton = createDialogActionButton("Delete Product");
+        deleteProductButton.addActionListener(event -> {
+            int row = productTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(parent, "Select a product to delete.", "No Selection", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String productName = String.valueOf(productModel.getValueAt(row, 0));
+            if (JOptionPane.showConfirmDialog(parent, "Delete selected product and its recipe?", "Confirm Delete", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+                return;
+            }
+            ProductDefinition product = findProductByName(productName);
+            if (product != null) {
+                productCatalog.remove(product);
+            }
+            productRecipes.remove(productName);
+            removeCartLinesForItem(productName);
+            saveProducts();
+            saveRecipes();
+            refreshProducts.run();
+            refreshRecipes.run();
+            refreshPosItemChoices();
+        });
+
+        JButton addRecipeButton = createDialogActionButton("Add Recipe Item");
+        addRecipeButton.addActionListener(event -> {
+            int row = productTable.getSelectedRow();
+            if (row < 0) {
+                JOptionPane.showMessageDialog(parent, "Select a product first.", "No Selection", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String productName = String.valueOf(productModel.getValueAt(row, 0));
+            JComboBox<String> itemField = new JComboBox<>();
+            itemField.setFont(MAIN_FONT);
+            for (int i = 0; i < tableModel.getRowCount(); i++) {
+                itemField.addItem(String.valueOf(tableModel.getValueAt(i, 0)));
+            }
+            JTextField qtyField = new JTextField(18);
+            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
+            form.setBackground(SECONDARY_COLOR);
+            form.add(new JLabel("Inventory Item:")); form.add(itemField);
+            form.add(new JLabel("Quantity Needed:")); form.add(qtyField);
+            if (JOptionPane.showConfirmDialog(parent, form, "Add Recipe Item", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+                return;
+            }
+            try {
+                String itemName = String.valueOf(itemField.getSelectedItem());
+                int quantityNeeded = Integer.parseInt(qtyField.getText().trim());
+                if (itemName == null || itemName.isBlank() || quantityNeeded <= 0) {
+                    throw new NumberFormatException();
+                }
+                List<RecipeLine> lines = productRecipes.computeIfAbsent(productName, key -> new ArrayList<>());
+                lines.removeIf(line -> line.itemName.equalsIgnoreCase(itemName));
+                lines.add(new RecipeLine(productName, itemName, quantityNeeded));
+                saveRecipes();
+                refreshProducts.run();
+                refreshRecipes.run();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(parent, "Quantity must be a positive number.", "Validation", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+
+        JButton editRecipeButton = createDialogActionButton("Edit Recipe Item");
+        editRecipeButton.addActionListener(event -> {
+            int productRow = productTable.getSelectedRow();
+            int recipeRow = recipeTable.getSelectedRow();
+            if (productRow < 0 || recipeRow < 0) {
+                JOptionPane.showMessageDialog(parent, "Select a product recipe row to edit.", "No Selection", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String productName = String.valueOf(productModel.getValueAt(productRow, 0));
+            String oldItemName = String.valueOf(recipeModel.getValueAt(recipeRow, 0));
+            JComboBox<String> itemField = new JComboBox<>();
+            itemField.setFont(MAIN_FONT);
+            for (int i = 0; i < tableModel.getRowCount(); i++) {
+                itemField.addItem(String.valueOf(tableModel.getValueAt(i, 0)));
+            }
+            itemField.setSelectedItem(oldItemName);
+            JTextField qtyField = new JTextField(String.valueOf(recipeModel.getValueAt(recipeRow, 1)), 18);
+            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
+            form.setBackground(SECONDARY_COLOR);
+            form.add(new JLabel("Inventory Item:")); form.add(itemField);
+            form.add(new JLabel("Quantity Needed:")); form.add(qtyField);
+            if (JOptionPane.showConfirmDialog(parent, form, "Edit Recipe Item", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+                return;
+            }
+            try {
+                String itemName = String.valueOf(itemField.getSelectedItem());
+                int quantityNeeded = Integer.parseInt(qtyField.getText().trim());
+                List<RecipeLine> lines = productRecipes.computeIfAbsent(productName, key -> new ArrayList<>());
+                lines.removeIf(line -> line.itemName.equalsIgnoreCase(oldItemName));
+                lines.add(new RecipeLine(productName, itemName, quantityNeeded));
+                saveRecipes();
+                refreshProducts.run();
+                refreshRecipes.run();
+            } catch (NumberFormatException ex) {
+                JOptionPane.showMessageDialog(parent, "Quantity must be a positive number.", "Validation", JOptionPane.WARNING_MESSAGE);
+            }
+        });
+
+        JButton deleteRecipeButton = createDialogActionButton("Delete Recipe Item");
+        deleteRecipeButton.addActionListener(event -> {
+            int productRow = productTable.getSelectedRow();
+            int recipeRow = recipeTable.getSelectedRow();
+            if (productRow < 0 || recipeRow < 0) {
+                JOptionPane.showMessageDialog(parent, "Select a recipe row to delete.", "No Selection", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String productName = String.valueOf(productModel.getValueAt(productRow, 0));
+            String itemName = String.valueOf(recipeModel.getValueAt(recipeRow, 0));
+            List<RecipeLine> lines = productRecipes.getOrDefault(productName, new ArrayList<>());
+            lines.removeIf(line -> line.itemName.equalsIgnoreCase(itemName));
+            if (lines.isEmpty()) {
+                productRecipes.remove(productName);
+            }
+            saveRecipes();
+            refreshProducts.run();
+            refreshRecipes.run();
+        });
+
+        JPanel productActions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        productActions.setBackground(SECONDARY_COLOR);
+        productActions.add(addProductButton);
+        productActions.add(editProductButton);
+        productActions.add(deleteProductButton);
+
+        JPanel recipeActions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        recipeActions.setBackground(SECONDARY_COLOR);
+        recipeActions.add(addRecipeButton);
+        recipeActions.add(editRecipeButton);
+        recipeActions.add(deleteRecipeButton);
+
+        JPanel productPanel = new JPanel(new BorderLayout(8, 8));
+        productPanel.setBackground(SECONDARY_COLOR);
+        productPanel.setBorder(BorderFactory.createTitledBorder(BorderFactory.createLineBorder(BORDER_COLOR), "POS Products"));
+        productPanel.add(productScrollPane, BorderLayout.CENTER);
+        productPanel.add(productActions, BorderLayout.SOUTH);
+
+        JPanel recipePanel = new JPanel(new BorderLayout(8, 8));
+        recipePanel.setBackground(SECONDARY_COLOR);
+        recipePanel.setBorder(BorderFactory.createTitledBorder(BorderFactory.createLineBorder(BORDER_COLOR), "Product Recipe"));
+        recipePanel.add(recipeScrollPane, BorderLayout.CENTER);
+        recipePanel.add(recipeActions, BorderLayout.SOUTH);
+
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setBackground(SECONDARY_COLOR);
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, productPanel, recipePanel);
+        splitPane.setResizeWeight(0.55);
+        splitPane.setContinuousLayout(true);
+        splitPane.setBorder(BorderFactory.createEmptyBorder());
+        panel.add(splitPane, BorderLayout.CENTER);
+        SwingUtilities.invokeLater(() -> splitPane.setDividerLocation(0.56));
+        return panel;
+    }
+
+    private void showProductsDialog() {
+        JDialog dialog = new JDialog(this, PRODUCTS_TEXT, true);
+        dialog.setLayout(new BorderLayout(8, 8));
+        dialog.getContentPane().setBackground(SECONDARY_COLOR);
+        dialog.add(createProductsWorkspaceTab(dialog), BorderLayout.CENTER);
+        JButton closeButton = createDialogActionButton("Close");
+        closeButton.addActionListener(event -> dialog.dispose());
+        JPanel footer = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        footer.setBackground(SECONDARY_COLOR);
+        footer.add(closeButton);
+        dialog.add(footer, BorderLayout.SOUTH);
+        dialog.setSize(980, 620);
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+    }
+
     private void showInventoryHubDialog() {
         if (!isCloudReady()) {
-            JOptionPane.showMessageDialog(this, "Cloud is currently unavailable. Reconnect to use Inventory Hub.", "Inventory Unavailable", JOptionPane.WARNING_MESSAGE);
+            showLocalInventorySnapshotDialog();
             return;
         }
         if (useTabbedInventoryWorkspace()) {
@@ -2662,7 +3504,7 @@ public class DrickSysApp extends JFrame {
         dialog.setVisible(true);
     }
 
-    private JPanel createSuppliersWorkspaceTab(JDialog dialog) {
+    private JPanel createSuppliersWorkspaceTab(Component dialog) {
         String[] columns = {"ID", "Name", "Contact", "Phone", "Email", "Address", "Status"};
         DefaultTableModel model = new DefaultTableModel(columns, 0) {
             @Override
@@ -2681,8 +3523,6 @@ public class DrickSysApp extends JFrame {
                 JOptionPane.showMessageDialog(dialog, "Failed to load suppliers: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
             }
         };
-        refresh.run();
-
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setBackground(SECONDARY_COLOR);
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
@@ -2783,10 +3623,13 @@ public class DrickSysApp extends JFrame {
         actions.add(delete);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
+        if (isCloudConfigured()) {
+            SwingUtilities.invokeLater(refresh);
+        }
         return panel;
     }
 
-    private JPanel createExpirationsWorkspaceTab(JDialog dialog) {
+    private JPanel createExpirationsWorkspaceTab(Component dialog) {
         String[] columns = {"ID", "Item", "Unit Type", "Quantity", "Expiration Date"};
         DefaultTableModel model = new DefaultTableModel(columns, 0) {
             @Override
@@ -2805,8 +3648,6 @@ public class DrickSysApp extends JFrame {
                 JOptionPane.showMessageDialog(dialog, "Failed to load expirations: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
             }
         };
-        refresh.run();
-
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setBackground(SECONDARY_COLOR);
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
@@ -2907,10 +3748,13 @@ public class DrickSysApp extends JFrame {
         actions.add(delete);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
+        if (isCloudConfigured()) {
+            SwingUtilities.invokeLater(refresh);
+        }
         return panel;
     }
 
-    private JPanel createIngredientsWorkspaceTab(JDialog dialog) {
+    private JPanel createIngredientsWorkspaceTab(Component dialog) {
         String[] columns = {"Product", "Item", "Unit Type", "Quantity Needed"};
         DefaultTableModel model = new DefaultTableModel(columns, 0) {
             @Override
@@ -2929,8 +3773,6 @@ public class DrickSysApp extends JFrame {
                 JOptionPane.showMessageDialog(dialog, "Failed to load ingredients: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
             }
         };
-        refresh.run();
-
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setBackground(SECONDARY_COLOR);
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
@@ -3033,10 +3875,13 @@ public class DrickSysApp extends JFrame {
         actions.add(delete);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
+        if (isCloudConfigured()) {
+            SwingUtilities.invokeLater(refresh);
+        }
         return panel;
     }
 
-    private JPanel createStockOutWorkspaceTab(JDialog dialog) {
+    private JPanel createStockOutWorkspaceTab(Component dialog) {
         String[] columns = {"ID", "Date", "Reason", "Item", "Quantity", "Cost"};
         DefaultTableModel model = new DefaultTableModel(columns, 0) {
             @Override
@@ -3055,8 +3900,6 @@ public class DrickSysApp extends JFrame {
                 JOptionPane.showMessageDialog(dialog, "Failed to load stock out records: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
             }
         };
-        refresh.run();
-
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setBackground(SECONDARY_COLOR);
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
@@ -3110,12 +3953,15 @@ public class DrickSysApp extends JFrame {
         actions.add(record);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
+        if (isCloudConfigured()) {
+            SwingUtilities.invokeLater(refresh);
+        }
         return panel;
     }
 
 
     private void logout() {
-        saveInventory();
+        persistAllData();
         logActionSafe("logout", "User logged out.");
         try {
             new SupabaseSessionStore().clear();
@@ -3137,11 +3983,13 @@ public class DrickSysApp extends JFrame {
 
     private void logActionSafe(String actionType, String details) {
         appendLocalActionLog(actionType, details);
-        try {
-            if (isCloudReady()) {
-                supabaseClient.logAction(session, actionType, details);
-            }
-        } catch (IOException | InterruptedException ignored) {
+        if (isCloudReady()) {
+            executorService.submit(() -> {
+                try {
+                    supabaseClient.logAction(session, actionType, details);
+                } catch (IOException | InterruptedException ignored) {
+                }
+            });
         }
     }
 
@@ -3178,6 +4026,11 @@ public class DrickSysApp extends JFrame {
     private void handleShowInventoryHubDialogAction(ActionEvent event) {
         event.getSource();
         showInventoryHubDialog();
+    }
+
+    private void handleShowProductsDialogAction(ActionEvent event) {
+        event.getSource();
+        showProductsDialog();
     }
 
     private void handleExportTextBackupAction(ActionEvent event) {

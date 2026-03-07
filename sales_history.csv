@@ -1,4 +1,24 @@
 Sale ID,Timestamp,Items,Units,Total,Details,Sync Status,Cloud Sale ID
+CLOUD-16,2026-03-07 00:00:00,"Add On Bobba x1, Late x1",2,90.0,"Sale ID: CLOUD-16
+Timestamp: 2026-03-07 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 16
+
+Add On Bobba x1 @ PHP 10.00 = PHP 10.00
+Late x1 @ PHP 80.00 = PHP 80.00
+
+Units: 2
+Total: PHP 90.00",Cloud Imported,16
+CLOUD-15,2026-03-07 00:00:00,"Add On Bobba x1, Taro x1",2,130.0,"Sale ID: CLOUD-15
+Timestamp: 2026-03-07 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 15
+
+Add On Bobba x1 @ PHP 10.00 = PHP 10.00
+Taro x1 @ PHP 120.00 = PHP 120.00
+
+Units: 2
+Total: PHP 130.00",Cloud Imported,15
 CLOUD-14,2026-03-07 00:00:00,Zues x6,6,414.0,"Sale ID: CLOUD-14
 Timestamp: 2026-03-07 00:00:00
 Sync: Cloud Imported

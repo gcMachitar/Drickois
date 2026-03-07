@@ -259,8 +259,18 @@ public class LoginFrame extends JFrame {
                     "Login Successful!",
                     "Welcome",
                     JOptionPane.INFORMATION_MESSAGE);
-            new DrickSysApp(this, supabaseClient, session).setVisible(true);
-            dispose();
+            try {
+                new DrickSysApp(this, supabaseClient, session).setVisible(true);
+                dispose();
+            } catch (RuntimeException ex) {
+                ex.printStackTrace();
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Main UI failed to open:\n" + ex,
+                        "Startup Error",
+                        JOptionPane.ERROR_MESSAGE
+                );
+            }
         } catch (IOException | InterruptedException ex) {
             String message = ex.getMessage() == null ? "" : ex.getMessage();
             String userMessage;
@@ -294,8 +304,18 @@ public class LoginFrame extends JFrame {
                 supabaseClient.logAction(refreshedSession, "session_restore", "Session restored on app start.");
             } catch (IOException ignored) {
             }
-            new DrickSysApp(this, supabaseClient, refreshedSession).setVisible(true);
-            dispose();
+            try {
+                new DrickSysApp(this, supabaseClient, refreshedSession).setVisible(true);
+                dispose();
+            } catch (RuntimeException ex) {
+                ex.printStackTrace();
+                JOptionPane.showMessageDialog(
+                        this,
+                        "Main UI failed to open:\n" + ex,
+                        "Startup Error",
+                        JOptionPane.ERROR_MESSAGE
+                );
+            }
         } catch (IOException | InterruptedException ignored) {
         }
     }

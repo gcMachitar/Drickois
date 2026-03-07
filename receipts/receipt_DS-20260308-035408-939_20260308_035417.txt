@@ -1,0 +1,10 @@
+----- DrickSys Receipt -----
+Sale ID: DS-20260308-035408-939
+Date: 2026-03-08 03:54:17
+------------------------------
+Late x1 @ PHP 80.00 = PHP 80.00
+Add On Bobba x1 @ PHP 10.00 = PHP 10.00
+------------------------------
+Grand Total: PHP 90.00
+------------------------------
+Thank you for your order!

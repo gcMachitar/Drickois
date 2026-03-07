@@ -376,11 +376,16 @@ public class SupabaseClient {
             int quantity,
             double price,
             String dateAdded,
-            String dateUpdated
+            String dateUpdated,
+            boolean linkToProduct
     ) throws IOException, InterruptedException {
         long categoryId = ensureCategory(session, category);
         long itemId = insertItem(session, itemName, category, quantity, price);
-        ensureProductAndIngredient(session, itemName, category, categoryId, itemId);
+        if (linkToProduct) {
+            ensureProductAndIngredient(session, itemName, category, categoryId, itemId);
+        } else {
+            deactivateProductByName(session, itemName, itemId);
+        }
     }
 
     public void updateInventoryItemByName(
@@ -390,7 +395,8 @@ public class SupabaseClient {
             String category,
             int quantity,
             double price,
-            String dateUpdated
+            String dateUpdated,
+            boolean linkToProduct
     ) throws IOException, InterruptedException {
         long categoryId = ensureCategory(session, category);
         long itemId = findItemIdByName(session, originalItemName);
@@ -411,7 +417,14 @@ public class SupabaseClient {
         if (refreshedItemId <= 0) {
             refreshedItemId = itemId;
         }
-        ensureProductAndIngredient(session, itemName, category, categoryId, refreshedItemId);
+        if (linkToProduct) {
+            ensureProductAndIngredient(session, itemName, category, categoryId, refreshedItemId);
+        } else {
+            deactivateProductByName(session, originalItemName, refreshedItemId);
+            if (!originalItemName.equalsIgnoreCase(itemName)) {
+                deactivateProductByName(session, itemName, refreshedItemId);
+            }
+        }
     }
 
     public void deleteInventoryItemByName(SupabaseSession session, String itemName) throws IOException, InterruptedException {
@@ -421,7 +434,7 @@ public class SupabaseClient {
         if (productId > 0) {
             sendJsonRequest(
                     "DELETE",
-                    "/rest/v1/ingredients?product_id=eq." + productId + "&item_id=eq." + itemId,
+                    "/rest/v1/ingredients?product_id=eq." + productId,
                     null,
                     session.getAccessToken(),
                     false
@@ -444,6 +457,24 @@ public class SupabaseClient {
         String path = "/rest/v1/item?select=item_name,unit_type,quantity_on_hand,unit_cost&order=item_id.desc";
         HttpResponse<String> response = sendJsonRequest("GET", path, null, session.getAccessToken(), false);
         return parseInventoryRecords(response.body());
+    }
+
+    public void updateInventoryQuantityByName(
+            SupabaseSession session,
+            String itemName,
+            int quantity
+    ) throws IOException, InterruptedException {
+        long itemId = findItemIdByName(session, itemName);
+        if (itemId <= 0) {
+            throw new IOException("Item not found: " + itemName);
+        }
+        sendJsonRequest(
+                "PATCH",
+                "/rest/v1/item?item_id=eq." + itemId,
+                "{\"quantity_on_hand\":" + quantity + "}",
+                session.getAccessToken(),
+                false
+        );
     }
 
     public void placeSaleForInventoryItem(
@@ -503,6 +534,22 @@ public class SupabaseClient {
                     session.getAccessToken(),
                     false
             );
+        }
+        return saleId;
+    }
+
+    public long placeProductSale(SupabaseSession session, List<SaleItem> saleItems) throws IOException, InterruptedException {
+        if (saleItems == null || saleItems.isEmpty()) {
+            return -1;
+        }
+
+        long userId = ensureOperationalUser(session);
+        long saleId = insertSale(session, userId);
+
+        for (SaleItem saleItem : saleItems) {
+            long categoryId = ensureCategory(session, saleItem.getCategory());
+            long productId = ensureStandaloneProduct(session, saleItem.getItemName(), saleItem.getCategory(), categoryId);
+            insertSalesDetail(session, saleId, productId, saleItem.getSoldQuantity(), saleItem.getUnitPrice());
         }
         return saleId;
     }
@@ -832,6 +879,60 @@ public class SupabaseClient {
                 + "\"quantity_needed\":1}]";
         sendJsonRequest("POST", "/rest/v1/ingredients", ingredientBody, session.getAccessToken(), false);
         return productId;
+    }
+
+    private long ensureStandaloneProduct(
+            SupabaseSession session,
+            String productName,
+            String unit,
+            long categoryId
+    ) throws IOException, InterruptedException {
+        long productId = findProductIdByName(session, productName);
+        if (productId <= 0) {
+            String productBody = "[{\"product_name\":\"" + jsonEscape(productName) + "\","
+                    + "\"category_id\":" + categoryId + ","
+                    + "\"unit\":\"" + jsonEscape(unit) + "\","
+                    + "\"reorder_level\":10,"
+                    + "\"is_active\":true}]";
+            sendJsonRequest("POST", "/rest/v1/product", productBody, session.getAccessToken(), false);
+            productId = findProductIdByName(session, productName);
+        } else {
+            String patchProductBody = "{"
+                    + "\"product_name\":\"" + jsonEscape(productName) + "\","
+                    + "\"category_id\":" + categoryId + ","
+                    + "\"unit\":\"" + jsonEscape(unit) + "\","
+                    + "\"is_active\":true"
+                    + "}";
+            sendJsonRequest("PATCH", "/rest/v1/product?product_id=eq." + productId, patchProductBody, session.getAccessToken(), false);
+        }
+
+        if (productId <= 0) {
+            throw new IOException("Unable to create/resolve product: " + productName);
+        }
+        return productId;
+    }
+
+    private void deactivateProductByName(
+            SupabaseSession session,
+            String productName,
+            long itemId
+    ) throws IOException, InterruptedException {
+        long productId = findProductIdByName(session, productName);
+        if (productId <= 0) {
+            return;
+        }
+
+        String ingredientPath = itemId > 0
+                ? "/rest/v1/ingredients?product_id=eq." + productId + "&item_id=eq." + itemId
+                : "/rest/v1/ingredients?product_id=eq." + productId;
+        sendJsonRequest("DELETE", ingredientPath, null, session.getAccessToken(), false);
+        sendJsonRequest(
+                "PATCH",
+                "/rest/v1/product?product_id=eq." + productId,
+                "{\"is_active\":false}",
+                session.getAccessToken(),
+                false
+        );
     }
 
     private long insertSale(SupabaseSession session, long userId) throws IOException, InterruptedException {

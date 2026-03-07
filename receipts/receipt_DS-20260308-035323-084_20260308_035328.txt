@@ -1,0 +1,10 @@
+----- DrickSys Receipt -----
+Sale ID: DS-20260308-035323-084
+Date: 2026-03-08 03:53:28
+------------------------------
+Taro x1 @ PHP 120.00 = PHP 120.00
+Add On Bobba x1 @ PHP 10.00 = PHP 10.00
+------------------------------
+Grand Total: PHP 130.00
+------------------------------
+Thank you for your order!

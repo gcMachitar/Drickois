@@ -1,3 +1,16 @@
 Timestamp,Action,Details
 2026-03-07 20:29:41,logout,User logged out.
 2026-03-07 20:40:09,logout,User logged out.
+2026-03-07 21:40:33,logout,User logged out.
+2026-03-08 02:19:40,delete_item,Deleted: hi
+2026-03-08 02:19:43,delete_item,Deleted: 67
+2026-03-08 02:19:46,delete_item,Deleted: Natchos
+2026-03-08 02:19:49,delete_item,Deleted: Himalayan Coffe Bean
+2026-03-08 02:19:51,delete_item,Deleted: Zues
+2026-03-08 02:19:56,delete_item,Deleted: mark
+2026-03-08 02:21:08,add_item,"Added: one, qty=12, price=1.0"
+2026-03-08 03:04:21,add_item,"Added: Coffee Beans, qty=18, price=100.0"
+2026-03-08 03:05:38,add_item,"Added: Bobba, qty=16, price=20.0"
+2026-03-08 03:06:06,add_item,"Added: Cheese, qty=21, price=12.0"
+2026-03-08 03:53:28,order_item,"Sale completed [DS-20260308-035323-084]: Taro x1, Add On Bobba x1, total=130.0"
+2026-03-08 03:54:17,order_item,"Sale completed [DS-20260308-035408-939]: Late x1, Add On Bobba x1, total=90.0"

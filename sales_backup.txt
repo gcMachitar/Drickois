@@ -1,5 +1,31 @@
 Sales Backup
-Saved at: 2026-03-07 21:20:55
+Saved at: 2026-03-08 04:00:09
+------------------------------------------------------------
+Sale ID: CLOUD-16 | Time: 2026-03-07 00:00:00 | Total: PHP 90.00
+Sync: Cloud Imported | Cloud Sale ID: 16
+Sale ID: CLOUD-16
+Timestamp: 2026-03-07 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 16
+
+Add On Bobba x1 @ PHP 10.00 = PHP 10.00
+Late x1 @ PHP 80.00 = PHP 80.00
+
+Units: 2
+Total: PHP 90.00
+------------------------------------------------------------
+Sale ID: CLOUD-15 | Time: 2026-03-07 00:00:00 | Total: PHP 130.00
+Sync: Cloud Imported | Cloud Sale ID: 15
+Sale ID: CLOUD-15
+Timestamp: 2026-03-07 00:00:00
+Sync: Cloud Imported
+Cloud Sale ID: 15
+
+Add On Bobba x1 @ PHP 10.00 = PHP 10.00
+Taro x1 @ PHP 120.00 = PHP 120.00
+
+Units: 2
+Total: PHP 130.00
 ------------------------------------------------------------
 Sale ID: CLOUD-14 | Time: 2026-03-07 00:00:00 | Total: PHP 414.00
 Sync: Cloud Imported | Cloud Sale ID: 14
