@@ -12,6 +12,20 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class SupabaseClient {
+    public static class SupabaseRequestException extends IOException {
+        private static final long serialVersionUID = 1L;
+        private final int statusCode;
+
+        public SupabaseRequestException(int statusCode, String message) {
+            super(message);
+            this.statusCode = statusCode;
+        }
+
+        public int getStatusCode() {
+            return statusCode;
+        }
+    }
+
     public static class ActionLogRecord {
         private final String actionType;
         private final String details;
@@ -159,6 +173,30 @@ public class SupabaseClient {
 
         public String getStatus() {
             return status;
+        }
+    }
+
+    public static class ItemSupplierAssignment {
+        private final String itemName;
+        private final long supplierId;
+        private final boolean primary;
+
+        public ItemSupplierAssignment(String itemName, long supplierId, boolean primary) {
+            this.itemName = itemName;
+            this.supplierId = supplierId;
+            this.primary = primary;
+        }
+
+        public String getItemName() {
+            return itemName;
+        }
+
+        public long getSupplierId() {
+            return supplierId;
+        }
+
+        public boolean isPrimary() {
+            return primary;
         }
     }
 
@@ -566,6 +604,36 @@ public class SupabaseClient {
         String path = "/rest/v1/supplier?select=supplier_id,supplier_name,contact_person,phone,email,address,status&order=supplier_id.desc";
         HttpResponse<String> response = sendJsonRequest("GET", path, null, session.getAccessToken(), false);
         return parseSupplierRecords(response.body());
+    }
+
+    public List<ItemSupplierAssignment> fetchItemSupplierAssignments(SupabaseSession session) throws IOException, InterruptedException {
+        String path = "/rest/v1/item_supplier?select=is_primary,supplier_id,item(item_name)&order=item_id.asc";
+        HttpResponse<String> response = sendJsonRequest("GET", path, null, session.getAccessToken(), false);
+        return parseItemSupplierAssignments(response.body());
+    }
+
+    public void assignSupplierToItem(SupabaseSession session, String itemName, long supplierId, boolean primary) throws IOException, InterruptedException {
+        long itemId = findItemIdByName(session, itemName);
+        if (itemId <= 0) {
+            throw new IOException("Item not found: " + itemName);
+        }
+        if (supplierId <= 0) {
+            throw new IOException("Supplier not found: " + supplierId);
+        }
+        if (primary) {
+            sendJsonRequest("PATCH", "/rest/v1/item_supplier?item_id=eq." + itemId, "{\"is_primary\":false}", session.getAccessToken(), false);
+        }
+        sendJsonRequest("DELETE", "/rest/v1/item_supplier?item_id=eq." + itemId + "&supplier_id=eq." + supplierId, null, session.getAccessToken(), false);
+        String body = "[{\"item_id\":" + itemId + ",\"supplier_id\":" + supplierId + ",\"is_primary\":" + primary + "}]";
+        sendJsonRequest("POST", "/rest/v1/item_supplier", body, session.getAccessToken(), false);
+    }
+
+    public void clearSupplierAssignmentsForItem(SupabaseSession session, String itemName) throws IOException, InterruptedException {
+        long itemId = findItemIdByName(session, itemName);
+        if (itemId <= 0) {
+            return;
+        }
+        sendJsonRequest("DELETE", "/rest/v1/item_supplier?item_id=eq." + itemId, null, session.getAccessToken(), false);
     }
 
     public List<SaleHistoryLineRecord> fetchSalesHistory(SupabaseSession session) throws IOException, InterruptedException {
@@ -1036,7 +1104,10 @@ public class SupabaseClient {
 
         HttpResponse<String> response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("Supabase request failed (" + response.statusCode() + "): " + response.body());
+            throw new SupabaseRequestException(
+                    response.statusCode(),
+                    "Supabase request failed (" + response.statusCode() + "): " + response.body()
+            );
         }
         return response;
     }
@@ -1128,6 +1199,18 @@ public class SupabaseClient {
                     defaultString(extractJsonString(objectJson, "email")),
                     defaultString(extractJsonString(objectJson, "address")),
                     defaultString(extractJsonString(objectJson, "status"))
+            ));
+        }
+        return records;
+    }
+
+    private static List<ItemSupplierAssignment> parseItemSupplierAssignments(String json) {
+        List<ItemSupplierAssignment> records = new ArrayList<>();
+        for (String objectJson : splitTopLevelObjects(json)) {
+            records.add(new ItemSupplierAssignment(
+                    defaultString(extractNestedItemName(objectJson)),
+                    extractJsonLong(objectJson, "supplier_id"),
+                    extractJsonBoolean(objectJson, "is_primary")
             ));
         }
         return records;
@@ -1241,6 +1324,15 @@ public class SupabaseClient {
             return Long.parseLong(matcher.group(1));
         }
         return -1;
+    }
+
+    private static boolean extractJsonBoolean(String jsonBody, String fieldName) {
+        Pattern pattern = Pattern.compile("\"" + Pattern.quote(fieldName) + "\"\\s*:\\s*(true|false)");
+        Matcher matcher = pattern.matcher(jsonBody);
+        if (matcher.find()) {
+            return Boolean.parseBoolean(matcher.group(1));
+        }
+        return false;
     }
 
     private static String extractNestedItemName(String jsonBody) {

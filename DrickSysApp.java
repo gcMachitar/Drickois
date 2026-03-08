@@ -2,7 +2,10 @@ import java.awt.*;
 import java.awt.event.*;
 import java.awt.print.PrinterException;
 import java.io.*;
+import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashMap;
@@ -52,10 +55,11 @@ public class DrickSysApp extends JFrame {
     private final transient SupabaseClient supabaseClient;
     private final transient SupabaseSession session;
 
-    private final SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private final SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss a");
     private static final String INVENTORY_FILE = "inventory.csv";
     private static final String PRODUCTS_FILE = "products.csv";
     private static final String RECIPES_FILE = "product_recipes.csv";
+    private static final String ITEM_SUPPLIERS_FILE = "item_suppliers.csv";
     private static final String INVENTORY_TEXT_BACKUP_FILE = "inventory_backup.txt";
     private static final String SALES_HISTORY_FILE = "sales_history.csv";
     private static final String SALES_TEXT_BACKUP_FILE = "sales_backup.txt";
@@ -65,8 +69,9 @@ public class DrickSysApp extends JFrame {
     private static final String DEFAULT_QUANTITY_PLACEHOLDER = "e.g., 25";
     private static final String DEFAULT_PRICE_PLACEHOLDER = "e.g., 125.50";
     private static final String[] INVENTORY_CATEGORIES = {
-            "Coffee", "Drinks", "Sweet Delights", "Snacks", "Pastries",
-            "Ingredient", "Kitchen Stock", "Packaging", "Cleaning Supply", "Other"
+            "Milktea", "Fruit Tea and Soda", "Lemonade", "Shakes", "Ricemeals",
+            "Pasta", "Coffee", "Add Ons", "Hot tea", "Cups",
+            "Kitchen stocks", "Vegetables", "Baking", "For cleaning", "others"
     };
 
     private static final String ADD_ITEM_TEXT = "Add Item";
@@ -87,7 +92,11 @@ public class DrickSysApp extends JFrame {
 
     private static final Font MAIN_FONT = new Font("Segoe UI", Font.PLAIN, 12);
     private static final Font HEADER_FONT = new Font("Segoe UI", Font.BOLD, 14);
-
+    private static final int COL_ITEM_NAME = 0;
+    private static final int COL_CATEGORY = 1;
+    private static final int COL_QUANTITY = 2;
+    private static final int COL_DATE_ADDED = 3;
+    private static final int COL_DATE_UPDATED = 4;
     private final int LOW_STOCK_THRESHOLD = 10;
 
     private final transient ExecutorService executorService = Executors.newSingleThreadExecutor();
@@ -95,6 +104,10 @@ public class DrickSysApp extends JFrame {
     private final transient List<SaleSummary> salesHistory = new ArrayList<>();
     private final transient List<ProductDefinition> productCatalog = new ArrayList<>();
     private final transient Map<String, List<RecipeLine>> productRecipes = new LinkedHashMap<>();
+    private final transient Map<String, Long> itemSupplierAssignments = new LinkedHashMap<>();
+    private final transient List<SupabaseClient.SupplierRecord> supplierDirectory = new ArrayList<>();
+    private final transient List<SupabaseClient.ExpirationRecord> expirationDirectory = new ArrayList<>();
+    private final transient List<SupabaseClient.StockOutItemRecord> stockOutDirectory = new ArrayList<>();
     private boolean cloudConnected;
     private boolean cloudDisconnectDialogShown;
     private int sessionSalesCount;
@@ -187,6 +200,7 @@ public class DrickSysApp extends JFrame {
                 System.out.println("Inventory file not found. Starting with empty inventory.");
             }
         }
+        loadItemSupplierAssignments();
         loadProducts();
         loadRecipes();
         loadSalesHistoryFromLocalFile();
@@ -223,6 +237,7 @@ public class DrickSysApp extends JFrame {
             setSize(targetWidth, targetHeight);
             setLocationRelativeTo(null);
             startInitialCloudSync();
+            refreshReferenceDirectoriesAsync(false);
         });
     }
 
@@ -237,8 +252,7 @@ public class DrickSysApp extends JFrame {
             @Override
             public Class<?> getColumnClass(int column) {
                 return switch (column) {
-                    case 2 -> Integer.class;
-                    case 3, 4 -> String.class;
+                    case COL_QUANTITY -> Integer.class;
                     default -> String.class;
                 };
             }
@@ -260,11 +274,9 @@ public class DrickSysApp extends JFrame {
         inventoryTable.setGridColor(BORDER_COLOR.brighter());
         inventoryTable.setShowGrid(true);
 
-        DefaultTableCellRenderer centerRenderer = new DefaultTableCellRenderer();
-        centerRenderer.setHorizontalAlignment(JLabel.CENTER);
-        inventoryTable.getColumnModel().getColumn(2).setCellRenderer(new LowQuantityRenderer());
-        inventoryTable.getColumnModel().getColumn(3).setCellRenderer(centerRenderer);
-        inventoryTable.getColumnModel().getColumn(4).setCellRenderer(centerRenderer);
+        inventoryTable.getColumnModel().getColumn(COL_QUANTITY).setCellRenderer(new StatusAwareTableCellRenderer());
+        inventoryTable.getColumnModel().getColumn(COL_DATE_ADDED).setCellRenderer(new DefaultTableCellRenderer());
+        inventoryTable.getColumnModel().getColumn(COL_DATE_UPDATED).setCellRenderer(new DefaultTableCellRenderer());
     }
 
     private void initializePosModels() {
@@ -382,7 +394,10 @@ public class DrickSysApp extends JFrame {
         posQuantitySpinner = new JSpinner(new SpinnerNumberModel(1, 1, 9999, 1));
         posQuantitySpinner.setFont(MAIN_FONT);
         JButton addToCartButton = createDialogActionButton("Add To Cart");
-        addToCartButton.addActionListener(event -> addSelectedItemToCart());
+        addToCartButton.addActionListener(event -> {
+            event.getSource();
+            addSelectedItemToCart();
+        });
 
         gbc.gridx = 0;
         gbc.gridy = 0;
@@ -426,12 +441,21 @@ public class DrickSysApp extends JFrame {
         cartFooter.add(cartTotalLabel);
 
         JButton removeLineButton = createDialogActionButton("Remove Line");
-        removeLineButton.addActionListener(event -> removeSelectedCartLine());
+        removeLineButton.addActionListener(event -> {
+            event.getSource();
+            removeSelectedCartLine();
+        });
         JButton clearCartButton = createDialogActionButton("Clear Cart");
-        clearCartButton.addActionListener(event -> clearCart());
+        clearCartButton.addActionListener(event -> {
+            event.getSource();
+            clearCart();
+        });
         JButton checkoutButton = createPrimaryActionButton("Checkout Sale");
         setButtonIcon(checkoutButton, "/resources/orderIcon.png", 18);
-        checkoutButton.addActionListener(event -> checkoutCart());
+        checkoutButton.addActionListener(event -> {
+            event.getSource();
+            checkoutCart();
+        });
 
         checkoutButton.setFont(HEADER_FONT.deriveFont(Font.BOLD));
 
@@ -497,40 +521,44 @@ public class DrickSysApp extends JFrame {
         return posPanel;
     }
 
-    private class LowQuantityRenderer extends DefaultTableCellRenderer {
+    private class StatusAwareTableCellRenderer extends DefaultTableCellRenderer {
         private static final long serialVersionUID = 1L;
-        public LowQuantityRenderer() {
+        public StatusAwareTableCellRenderer() {
             setHorizontalAlignment(JLabel.CENTER);
         }
 
         @Override
         public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
             Component cellComponent = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-
-            if (column == 2) {
-                int quantity = 0;
+            setHorizontalAlignment(column == COL_QUANTITY || column == COL_DATE_ADDED || column == COL_DATE_UPDATED ? JLabel.CENTER : JLabel.LEFT);
+            int quantity = 0;
+            if (column == COL_QUANTITY) {
                 if (value instanceof Number numberValue) {
                     quantity = numberValue.intValue();
                 } else if (value != null) {
                     try {
                         quantity = Integer.parseInt(String.valueOf(value));
-                    } catch (NumberFormatException e) {
-
+                    } catch (NumberFormatException ignored) {
                     }
                 }
+            }
 
-                if (quantity < LOW_STOCK_THRESHOLD) {
-                    cellComponent.setBackground(LOW_STOCK_COLOR);
-                    cellComponent.setForeground(Color.RED.darker());
-                    cellComponent.setFont(cellComponent.getFont().deriveFont(Font.BOLD));
-                } else {
-                    cellComponent.setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
-                    cellComponent.setForeground(isSelected ? table.getSelectionForeground() : TEXT_COLOR);
-                    cellComponent.setFont(cellComponent.getFont().deriveFont(Font.PLAIN));
-                }
+            if (isSelected) {
+                cellComponent.setBackground(table.getSelectionBackground());
+                cellComponent.setForeground(table.getSelectionForeground());
+                cellComponent.setFont(cellComponent.getFont().deriveFont(Font.BOLD));
+            } else if (column == COL_QUANTITY && quantity <= 0) {
+                cellComponent.setBackground(new Color(255, 236, 236));
+                cellComponent.setForeground(new Color(160, 20, 20));
+                cellComponent.setFont(cellComponent.getFont().deriveFont(Font.BOLD));
+            } else if (column == COL_QUANTITY && quantity <= LOW_STOCK_THRESHOLD) {
+                cellComponent.setBackground(LOW_STOCK_COLOR);
+                cellComponent.setForeground(new Color(120, 70, 0));
+                cellComponent.setFont(cellComponent.getFont().deriveFont(Font.BOLD));
             } else {
-                cellComponent.setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
-                cellComponent.setForeground(isSelected ? table.getSelectionForeground() : TEXT_COLOR);
+                cellComponent.setBackground(table.getBackground());
+                cellComponent.setForeground(TEXT_COLOR);
+                cellComponent.setFont(cellComponent.getFont().deriveFont(Font.PLAIN));
             }
             return cellComponent;
         }
@@ -561,6 +589,7 @@ public class DrickSysApp extends JFrame {
         }
     }
 
+    @SuppressWarnings("unused")
     private JPanel createInputPanel() {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setBackground(SECONDARY_COLOR);
@@ -1071,6 +1100,7 @@ public class DrickSysApp extends JFrame {
         return -1;
     }
 
+    @SuppressWarnings("unused")
     private int getQuantityReservedInCart(String itemName) {
         int reserved = 0;
         for (int i = 0; i < cartTableModel.getRowCount(); i++) {
@@ -1086,12 +1116,14 @@ public class DrickSysApp extends JFrame {
             return false;
         }
         String normalized = category.trim().toLowerCase();
-        return !normalized.equals("ingredient")
-                && !normalized.equals("kitchen stock")
-                && !normalized.equals("packaging")
-                && !normalized.equals("cleaning supply");
+        return !normalized.equals("cups")
+                && !normalized.equals("kitchen stocks")
+                && !normalized.equals("vegetables")
+                && !normalized.equals("baking")
+                && !normalized.equals("for cleaning");
     }
 
+    @SuppressWarnings("unused")
     private double parseItemPrice(String rawPrice, String category) {
         String normalizedPrice = rawPrice == null ? "" : rawPrice.trim();
         boolean placeholder = normalizedPrice.isEmpty() || normalizedPrice.equals(DEFAULT_PRICE_PLACEHOLDER);
@@ -1148,7 +1180,10 @@ public class DrickSysApp extends JFrame {
         dialog.add(new JScrollPane(snapshotTable), BorderLayout.CENTER);
 
         JButton closeButton = createDialogActionButton("Close");
-        closeButton.addActionListener(event -> dialog.dispose());
+        closeButton.addActionListener(event -> {
+            event.getSource();
+            dialog.dispose();
+        });
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         actions.setBackground(SECONDARY_COLOR);
         actions.add(closeButton);
@@ -1390,6 +1425,12 @@ public class DrickSysApp extends JFrame {
             cloudConnected = true;
             updateCloudStatusIndicator();
             return true;
+        } catch (SupabaseClient.SupabaseRequestException e) {
+            cloudConnected = true;
+            updateCloudStatusIndicator();
+            updateStatusBar("Cloud request failed during " + actionLabel + ". Local data was kept.", Color.ORANGE.darker());
+            LOGGER.log(Level.WARNING, "Cloud request failed: " + actionLabel, e);
+            return false;
         } catch (IOException | InterruptedException e) {
             cloudConnected = false;
             updateCloudStatusIndicator();
@@ -1415,6 +1456,17 @@ public class DrickSysApp extends JFrame {
         executorService.submit(() -> runCloudOperation(actionLabel, operation));
     }
 
+    private boolean isInvalidInventoryItemName(String itemName) {
+        if (itemName == null) {
+            return true;
+        }
+        String normalized = itemName.trim();
+        return normalized.isEmpty()
+                || normalized.equals(DEFAULT_ITEM_NAME_PLACEHOLDER)
+                || normalized.equalsIgnoreCase("Item Name")
+                || normalized.equalsIgnoreCase("Search items...");
+    }
+
     private String csvEscape(Object value) {
         String text = value == null ? "" : String.valueOf(value);
         if (text.contains("\"")) {
@@ -1424,6 +1476,380 @@ public class DrickSysApp extends JFrame {
             return "\"" + text + "\"";
         }
         return text;
+    }
+
+    private void loadItemSupplierAssignments() {
+        itemSupplierAssignments.clear();
+        if (isCloudConfigured()) {
+            try {
+                List<SupabaseClient.ItemSupplierAssignment> assignments = supabaseClient.fetchItemSupplierAssignments(session);
+                for (SupabaseClient.ItemSupplierAssignment assignment : assignments) {
+                    if (!assignment.isPrimary() || isInvalidInventoryItemName(assignment.getItemName())) {
+                        continue;
+                    }
+                    itemSupplierAssignments.put(normalizeInventoryKey(assignment.getItemName()), assignment.getSupplierId());
+                }
+                saveItemSupplierAssignments();
+                return;
+            } catch (IOException | InterruptedException e) {
+                LOGGER.log(Level.INFO, "Falling back to local item supplier mapping file", e);
+            }
+        }
+        File file = new File(ITEM_SUPPLIERS_FILE);
+        if (!file.exists()) {
+            return;
+        }
+        try (Scanner scanner = new Scanner(file)) {
+            if (scanner.hasNextLine()) {
+                scanner.nextLine();
+            }
+            while (scanner.hasNextLine()) {
+                List<String> parts = parseCsvLine(scanner.nextLine());
+                if (parts.size() < 2) {
+                    continue;
+                }
+                try {
+                    itemSupplierAssignments.put(normalizeInventoryKey(parts.get(0)), Long.parseLong(parts.get(1)));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        } catch (FileNotFoundException e) {
+            LOGGER.log(Level.WARNING, "Item supplier mapping file unavailable", e);
+        }
+    }
+
+    private void saveItemSupplierAssignments() {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(ITEM_SUPPLIERS_FILE))) {
+            writer.write("Item Name,Supplier ID");
+            writer.newLine();
+            for (int i = 0; i < tableModel.getRowCount(); i++) {
+                String itemName = String.valueOf(tableModel.getValueAt(i, 0));
+                Long supplierId = itemSupplierAssignments.get(normalizeInventoryKey(itemName));
+                if (supplierId == null || supplierId <= 0L) {
+                    continue;
+                }
+                writer.write(csvEscape(itemName));
+                writer.write(",");
+                writer.write(csvEscape(supplierId));
+                writer.newLine();
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed writing item supplier mapping file", e);
+        }
+    }
+
+    private void renameItemSupplierAssignment(String oldItemName, String newItemName) {
+        String oldKey = normalizeInventoryKey(oldItemName);
+        Long supplierId = itemSupplierAssignments.remove(oldKey);
+        if (supplierId != null && supplierId > 0L && !isInvalidInventoryItemName(newItemName)) {
+            itemSupplierAssignments.put(normalizeInventoryKey(newItemName), supplierId);
+        }
+        saveItemSupplierAssignments();
+    }
+
+    private void removeItemSupplierAssignment(String itemName) {
+        if (itemName == null) {
+            return;
+        }
+        itemSupplierAssignments.remove(normalizeInventoryKey(itemName));
+        saveItemSupplierAssignments();
+    }
+
+    private Long findAssignedSupplierId(String itemName) {
+        if (itemName == null) {
+            return null;
+        }
+        return itemSupplierAssignments.get(normalizeInventoryKey(itemName));
+    }
+
+    private SupabaseClient.SupplierRecord findSupplierRecordById(long supplierId) {
+        for (SupabaseClient.SupplierRecord supplier : supplierDirectory) {
+            if (supplier.getSupplierId() == supplierId) {
+                return supplier;
+            }
+        }
+        return null;
+    }
+
+    private List<SupabaseClient.ExpirationRecord> findExpirationsForItem(String itemName) {
+        List<SupabaseClient.ExpirationRecord> matches = new ArrayList<>();
+        String key = normalizeInventoryKey(itemName);
+        for (SupabaseClient.ExpirationRecord expiration : expirationDirectory) {
+            if (normalizeInventoryKey(expiration.getItemName()).equals(key)) {
+                matches.add(expiration);
+            }
+        }
+        return matches;
+    }
+
+    private List<SupabaseClient.StockOutItemRecord> findStockOutsForItem(String itemName) {
+        List<SupabaseClient.StockOutItemRecord> matches = new ArrayList<>();
+        String key = normalizeInventoryKey(itemName);
+        for (SupabaseClient.StockOutItemRecord stockOut : stockOutDirectory) {
+            if (normalizeInventoryKey(stockOut.getItemName()).equals(key)) {
+                matches.add(stockOut);
+            }
+        }
+        return matches;
+    }
+
+    private LocalDate parseExpirationDateSafe(String rawDate) {
+        if (rawDate == null || rawDate.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(rawDate.trim());
+        } catch (DateTimeParseException ignored) {
+            return null;
+        }
+    }
+
+    private ExpirationDateSelection createExpirationDateSelection(LocalDate initialDate) {
+        LocalDate value = initialDate == null ? LocalDate.now() : initialDate;
+        String[] months = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+        JComboBox<String> monthField = new JComboBox<>(months);
+        monthField.setSelectedIndex(value.getMonthValue() - 1);
+
+        Integer[] days = new Integer[31];
+        for (int i = 0; i < 31; i++) {
+            days[i] = i + 1;
+        }
+        JComboBox<Integer> dayField = new JComboBox<>(days);
+        dayField.setSelectedItem(value.getDayOfMonth());
+
+        int currentYear = LocalDate.now().getYear();
+        Integer[] years = new Integer[10];
+        for (int i = 0; i < years.length; i++) {
+            years[i] = currentYear + i;
+        }
+        JComboBox<Integer> yearField = new JComboBox<>(years);
+        yearField.setSelectedItem(value.getYear());
+        return new ExpirationDateSelection(monthField, dayField, yearField);
+    }
+
+    private JPanel createExpirationDateSelectionPanel(ExpirationDateSelection selection) {
+        JPanel panel = new JPanel(new GridLayout(1, 3, 4, 0));
+        panel.setBackground(SECONDARY_COLOR);
+        panel.add(selection.monthField);
+        panel.add(selection.dayField);
+        panel.add(selection.yearField);
+        return panel;
+    }
+
+    private String getSelectedExpirationDate(ExpirationDateSelection selection) {
+        try {
+            int month = selection.monthField.getSelectedIndex() + 1;
+            int day = (Integer) selection.dayField.getSelectedItem();
+            int year = (Integer) selection.yearField.getSelectedItem();
+            return LocalDate.of(year, month, day).toString();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private String buildExpirationSummary(String itemName) {
+        List<SupabaseClient.ExpirationRecord> expirations = findExpirationsForItem(itemName);
+        if (expirations.isEmpty()) {
+            return "No expiration record";
+        }
+        LocalDate today = LocalDate.now();
+        LocalDate nearestDate = null;
+        boolean expired = false;
+        boolean expiringSoon = false;
+        for (SupabaseClient.ExpirationRecord expiration : expirations) {
+            LocalDate expirationDate = parseExpirationDateSafe(expiration.getExpirationDate());
+            if (expirationDate == null) {
+                continue;
+            }
+            if (nearestDate == null || expirationDate.isBefore(nearestDate)) {
+                nearestDate = expirationDate;
+            }
+            if (expirationDate.isBefore(today)) {
+                expired = true;
+            } else if (!expirationDate.isAfter(today.plusDays(7))) {
+                expiringSoon = true;
+            }
+        }
+        if (nearestDate == null) {
+            return "Expiration saved, date unreadable";
+        }
+        if (expired) {
+            return "Expired since " + nearestDate;
+        }
+        if (expiringSoon) {
+            return "Expiring soon on " + nearestDate;
+        }
+        return "Nearest expiration: " + nearestDate;
+    }
+
+    private String buildSupplierSummary(String itemName) {
+        Long supplierId = findAssignedSupplierId(itemName);
+        if (supplierId == null) {
+            return "Unassigned";
+        }
+        SupabaseClient.SupplierRecord supplier = findSupplierRecordById(supplierId);
+        if (supplier == null) {
+            return "Supplier ID " + supplierId;
+        }
+        return supplier.getSupplierName();
+    }
+
+    private int findInventoryQuantityByName(String itemName) {
+        int row = findInventoryRowByName(itemName);
+        if (row < 0) {
+            return -1;
+        }
+        return ((Number) tableModel.getValueAt(row, COL_QUANTITY)).intValue();
+    }
+
+    private String findInventoryCategoryByName(String itemName) {
+        int row = findInventoryRowByName(itemName);
+        if (row < 0) {
+            return "";
+        }
+        return String.valueOf(tableModel.getValueAt(row, COL_CATEGORY));
+    }
+
+    private List<String> findItemsForSupplier(long supplierId) {
+        List<String> items = new ArrayList<>();
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            String itemName = String.valueOf(tableModel.getValueAt(i, COL_ITEM_NAME));
+            Long assignedSupplierId = findAssignedSupplierId(itemName);
+            if (assignedSupplierId != null && assignedSupplierId == supplierId) {
+                items.add(itemName);
+            }
+        }
+        return items;
+    }
+
+    private List<String> getNonSellableInventoryItems() {
+        List<String> items = new ArrayList<>();
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            String itemName = String.valueOf(tableModel.getValueAt(i, COL_ITEM_NAME));
+            if (!isInvalidInventoryItemName(itemName)) {
+                items.add(itemName);
+            }
+        }
+        return items;
+    }
+
+    private SupabaseClient.ExpirationRecord findNearestExpirationRecord(String itemName) {
+        SupabaseClient.ExpirationRecord nearest = null;
+        LocalDate nearestDate = null;
+        for (SupabaseClient.ExpirationRecord expiration : findExpirationsForItem(itemName)) {
+            LocalDate expirationDate = parseExpirationDateSafe(expiration.getExpirationDate());
+            if (expirationDate == null) {
+                continue;
+            }
+            if (nearestDate == null || expirationDate.isBefore(nearestDate)) {
+                nearest = expiration;
+                nearestDate = expirationDate;
+            }
+        }
+        return nearest;
+    }
+
+    private SupabaseClient.StockOutItemRecord findLatestStockOutRecord(String itemName) {
+        List<SupabaseClient.StockOutItemRecord> stockOuts = findStockOutsForItem(itemName);
+        return stockOuts.isEmpty() ? null : stockOuts.get(0);
+    }
+
+    private String buildStockStatusSummary(int quantity) {
+        if (quantity <= 0) {
+            return "Out of stock";
+        }
+        if (quantity <= LOW_STOCK_THRESHOLD) {
+            return "Low stock (" + quantity + " left)";
+        }
+        return "In stock (" + quantity + " on hand)";
+    }
+
+    private void refreshStockDetailsPanel() {
+        // Stock-linked detail management now lives in the Suppliers, Expirations, and Stock Out tabs.
+    }
+
+    private void refreshInventoryDerivedColumns() {
+        if (inventoryTable != null) {
+            inventoryTable.repaint();
+        }
+    }
+
+    private void refreshReferenceDirectoriesAsync(boolean showFeedback) {
+        if (!isCloudConfigured()) {
+            if (showFeedback) {
+                updateStatusBar("Cloud is not configured. Supplier, expiration, and stock-out links are local only.", Color.ORANGE.darker());
+            }
+            loadItemSupplierAssignments();
+            refreshInventoryDerivedColumns();
+            refreshStockDetailsPanel();
+            return;
+        }
+        executorService.submit(() -> {
+            try {
+                List<SupabaseClient.SupplierRecord> suppliers = supabaseClient.fetchSuppliers(session);
+                List<SupabaseClient.ExpirationRecord> expirations = supabaseClient.fetchExpirations(session);
+                List<SupabaseClient.StockOutItemRecord> stockOuts = supabaseClient.fetchStockOutItems(session);
+                List<SupabaseClient.ItemSupplierAssignment> assignments = supabaseClient.fetchItemSupplierAssignments(session);
+                SwingUtilities.invokeLater(() -> {
+                    supplierDirectory.clear();
+                    supplierDirectory.addAll(suppliers);
+                    expirationDirectory.clear();
+                    expirationDirectory.addAll(expirations);
+                    stockOutDirectory.clear();
+                    stockOutDirectory.addAll(stockOuts);
+                    itemSupplierAssignments.clear();
+                    for (SupabaseClient.ItemSupplierAssignment assignment : assignments) {
+                        if (!assignment.isPrimary() || isInvalidInventoryItemName(assignment.getItemName())) {
+                            continue;
+                        }
+                        itemSupplierAssignments.put(normalizeInventoryKey(assignment.getItemName()), assignment.getSupplierId());
+                    }
+                    saveItemSupplierAssignments();
+                    refreshInventoryDerivedColumns();
+                    refreshStockDetailsPanel();
+                    if (showFeedback) {
+                        updateStatusBar("Linked stock details refreshed.", PRIMARY_COLOR.darker());
+                    }
+                });
+            } catch (IOException | InterruptedException e) {
+                SwingUtilities.invokeLater(() -> {
+                    loadItemSupplierAssignments();
+                    refreshInventoryDerivedColumns();
+                    refreshStockDetailsPanel();
+                    if (showFeedback) {
+                        updateStatusBar("Could not refresh linked stock details.", Color.ORANGE.darker());
+                    }
+                });
+            }
+        });
+    }
+
+    private void refreshReferenceDirectoriesNow(Component dialog) {
+        if (!isCloudConfigured()) {
+            loadItemSupplierAssignments();
+            return;
+        }
+        try {
+            supplierDirectory.clear();
+            supplierDirectory.addAll(supabaseClient.fetchSuppliers(session));
+            expirationDirectory.clear();
+            expirationDirectory.addAll(supabaseClient.fetchExpirations(session));
+            stockOutDirectory.clear();
+            stockOutDirectory.addAll(supabaseClient.fetchStockOutItems(session));
+            itemSupplierAssignments.clear();
+            for (SupabaseClient.ItemSupplierAssignment assignment : supabaseClient.fetchItemSupplierAssignments(session)) {
+                if (!assignment.isPrimary() || isInvalidInventoryItemName(assignment.getItemName())) {
+                    continue;
+                }
+                itemSupplierAssignments.put(normalizeInventoryKey(assignment.getItemName()), assignment.getSupplierId());
+            }
+            saveItemSupplierAssignments();
+        } catch (IOException | InterruptedException ex) {
+            loadItemSupplierAssignments();
+            if (dialog != null) {
+                JOptionPane.showMessageDialog(dialog, "Failed to refresh linked stock data: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
+            }
+        }
     }
 
     private List<String> parseCsvLine(String line) {
@@ -1455,6 +1881,15 @@ public class DrickSysApp extends JFrame {
 
     private String generateSaleId() {
         return "DS-" + new SimpleDateFormat("yyyyMMdd-HHmmss-SSS").format(new Date());
+    }
+
+    private List<RecipeLine> getOrCreateRecipeLines(String productName) {
+        List<RecipeLine> recipeLines = productRecipes.get(productName);
+        if (recipeLines == null) {
+            recipeLines = new ArrayList<>();
+            productRecipes.put(productName, recipeLines);
+        }
+        return recipeLines;
     }
 
     private boolean isSaleInCurrentDay(SaleSummary sale) {
@@ -1521,6 +1956,7 @@ public class DrickSysApp extends JFrame {
         }
     }
 
+    @SuppressWarnings("unused")
     private void loadSalesHistory() {
         loadSalesHistoryFromLocalFile();
         mergeCloudSalesHistory();
@@ -1614,18 +2050,22 @@ public class DrickSysApp extends JFrame {
         cloudConnected = true;
         cloudDisconnectDialogShown = false;
         updateCloudStatusIndicator();
+        saveItemSupplierAssignments();
+        refreshInventoryDerivedColumns();
         if (tableModel.getRowCount() == 0) {
             int localRows = loadInventoryFromLocalFile();
             if (localRows > 0) {
                 updateStatusBar("Cloud inventory is empty. Showing local backup items.", Color.ORANGE.darker());
                 refreshPosItemChoices();
                 updateTotalQuantity();
+                refreshStockDetailsPanel();
                 return;
             }
         }
         saveInventory();
         refreshPosItemChoices();
         updateTotalQuantity();
+        refreshStockDetailsPanel();
         updateStatusBar("Inventory loaded from cloud.", PRIMARY_COLOR.darker());
     }
 
@@ -1664,7 +2104,12 @@ public class DrickSysApp extends JFrame {
             if (line.getSaleId() <= 0) {
                 continue;
             }
-            groupedLines.computeIfAbsent(line.getSaleId(), saleId -> new ArrayList<>()).add(line);
+            List<SupabaseClient.SaleHistoryLineRecord> saleLines = groupedLines.get(line.getSaleId());
+            if (saleLines == null) {
+                saleLines = new ArrayList<>();
+                groupedLines.put(line.getSaleId(), saleLines);
+            }
+            saleLines.add(line);
         }
 
         boolean changed = false;
@@ -1840,6 +2285,8 @@ public class DrickSysApp extends JFrame {
             updateTotalQuantity();
             refreshPosItemChoices();
             saveInventory();
+            refreshInventoryDerivedColumns();
+            refreshStockDetailsPanel();
             logActionSafe("add_item", "Added: " + itemName + ", qty=" + quantity);
             if (isCloudConfigured()) {
                 queueCloudOperation("add item", () ->
@@ -1853,6 +2300,98 @@ public class DrickSysApp extends JFrame {
             JOptionPane.showMessageDialog(this, "An unexpected error occurred: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             updateStatusBar("Error: " + e.getMessage(), Color.RED);
         }
+    }
+
+    private void applyInventoryItemUpdate(int modelRow, String itemName, String itemCategory, int quantity) {
+        double price = 0.0;
+        String originalItemName = String.valueOf(tableModel.getValueAt(modelRow, 0));
+        String updatedDate = dateFormatter.format(new Date());
+        tableModel.setValueAt(itemName, modelRow, 0);
+        tableModel.setValueAt(itemCategory, modelRow, 1);
+        tableModel.setValueAt(quantity, modelRow, 2);
+        tableModel.setValueAt(updatedDate, modelRow, 4);
+        renameItemSupplierAssignment(originalItemName, itemName);
+        clearFields();
+        updateTotalQuantity();
+        refreshPosItemChoices();
+        saveInventory();
+        refreshStockDetailsPanel();
+        logActionSafe("update_item", "Updated: " + originalItemName + " -> " + itemName + ", qty=" + quantity);
+        if (isCloudConfigured()) {
+            queueCloudOperation("update item", () ->
+                    supabaseClient.updateInventoryItemByName(
+                            session,
+                            originalItemName,
+                            itemName,
+                            itemCategory,
+                            quantity,
+                            price,
+                            updatedDate,
+                            isSellableCategory(itemCategory)
+                    )
+            );
+            updateStatusBar("Item '" + itemName + "' updated. Cloud sync running in background.", PRIMARY_COLOR.darker());
+        } else {
+            updateStatusBar("Item '" + itemName + "' updated locally.", TEXT_COLOR);
+        }
+    }
+
+    private void showEditInventoryItemDialog(int viewRow) {
+        if (viewRow < 0) {
+            JOptionPane.showMessageDialog(this, "Please select an item to edit.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        int modelRow = inventoryTable.convertRowIndexToModel(viewRow);
+        String originalItemName = String.valueOf(tableModel.getValueAt(modelRow, 0));
+        String originalCategory = String.valueOf(tableModel.getValueAt(modelRow, 1));
+        int originalQuantity = ((Number) tableModel.getValueAt(modelRow, 2)).intValue();
+
+        JTextField nameField = new JTextField(originalItemName, 18);
+        JComboBox<String> categoryField = createStyledComboBox(INVENTORY_CATEGORIES);
+        categoryField.setSelectedItem(originalCategory);
+        JTextField quantityField = new JTextField(String.valueOf(originalQuantity), 18);
+
+        JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
+        form.setBackground(SECONDARY_COLOR);
+        form.add(new JLabel("Item Name:")); form.add(nameField);
+        form.add(new JLabel("Category:")); form.add(categoryField);
+        form.add(new JLabel("Quantity:")); form.add(quantityField);
+
+        if (JOptionPane.showConfirmDialog(this, form, "Edit Item", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        String itemName = nameField.getText().trim();
+        String itemCategory = String.valueOf(categoryField.getSelectedItem());
+        if (itemName.isEmpty() || itemName.equals(DEFAULT_ITEM_NAME_PLACEHOLDER)) {
+            JOptionPane.showMessageDialog(this, "Please enter a valid item name.", "Input Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        if (itemCategory == null || itemCategory.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Please select a valid item category.", "Input Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            if (i != modelRow && String.valueOf(tableModel.getValueAt(i, 0)).equalsIgnoreCase(itemName)) {
+                JOptionPane.showMessageDialog(this, "An item with this name already exists.", "Duplicate Item", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+
+        int quantity;
+        try {
+            quantity = Integer.parseInt(quantityField.getText().trim());
+            if (quantity < 0) {
+                throw new NumberFormatException();
+            }
+        } catch (NumberFormatException e) {
+            JOptionPane.showMessageDialog(this, "Please enter a valid positive integer for quantity.", "Input Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        inventoryTable.setRowSelectionInterval(viewRow, viewRow);
+        applyInventoryItemUpdate(modelRow, itemName, itemCategory, quantity);
     }
 
     private void updateItem() {
@@ -1947,13 +2486,15 @@ public class DrickSysApp extends JFrame {
             int modelRow = inventoryTable.convertRowIndexToModel(selectedRow);
             String itemName = (String) tableModel.getValueAt(modelRow, 0);
             tableModel.removeRow(modelRow);
+            removeItemSupplierAssignment(itemName);
             removeCartLinesForItem(itemName);
             clearFields();
             updateTotalQuantity();
             refreshPosItemChoices();
             saveInventory();
+            refreshStockDetailsPanel();
             logActionSafe("delete_item", "Deleted: " + itemName);
-            if (isCloudConfigured()) {
+            if (isCloudConfigured() && !isInvalidInventoryItemName(itemName)) {
                 queueCloudOperation("delete item", () ->
                         supabaseClient.deleteInventoryItemByName(session, itemName)
                 );
@@ -1973,6 +2514,7 @@ public class DrickSysApp extends JFrame {
         itemQuantityField.setText(DEFAULT_QUANTITY_PLACEHOLDER);
         itemQuantityField.setForeground(Color.GRAY);
         inventoryTable.clearSelection();
+        refreshStockDetailsPanel();
         updateStatusBar("Fields cleared.", TEXT_COLOR);
     }
 
@@ -2123,11 +2665,15 @@ public class DrickSysApp extends JFrame {
                     if (localRows > 0) {
                         updateStatusBar("Cloud inventory is empty. Showing local backup items.", Color.ORANGE.darker());
                         refreshPosItemChoices();
+                        refreshStockDetailsPanel();
                         return;
                     }
                 }
+                saveItemSupplierAssignments();
+                refreshInventoryDerivedColumns();
                 saveInventory();
                 refreshPosItemChoices();
+                refreshStockDetailsPanel();
                 updateStatusBar("Inventory loaded from cloud.", PRIMARY_COLOR.darker());
                 return;
             } catch (IOException | InterruptedException e) {
@@ -2144,6 +2690,7 @@ public class DrickSysApp extends JFrame {
                 System.out.println("Inventory file not found. Starting with empty inventory.");
             }
         }
+        refreshStockDetailsPanel();
     }
 
     private int loadInventoryFromLocalFile() {
@@ -2163,6 +2710,9 @@ public class DrickSysApp extends JFrame {
                 if (parts.size() >= 5) {
                     try {
                         String name = parts.get(0);
+                        if (isInvalidInventoryItemName(name)) {
+                            continue;
+                        }
                         String category = parts.get(1);
                         int quantity = Integer.parseInt(parts.get(2));
                         String dateAdded;
@@ -2189,6 +2739,7 @@ public class DrickSysApp extends JFrame {
                     System.err.println("Skipping malformed inventory line (incorrect number of fields): " + line);
                 }
             }
+            refreshInventoryDerivedColumns();
             refreshPosItemChoices();
             updateStatusBar("Inventory loaded successfully from " + INVENTORY_FILE, PRIMARY_COLOR.darker());
             return tableModel.getRowCount();
@@ -2201,20 +2752,25 @@ public class DrickSysApp extends JFrame {
     }
 
     private void saveInventory() {
+        int persistedColumnCount = Math.min(5, tableModel.getColumnCount());
         try (FileWriter fw = new FileWriter(INVENTORY_FILE);
              BufferedWriter bw = new BufferedWriter(fw)) {
-            for (int i = 0; i < tableModel.getColumnCount(); i++) {
+            for (int i = 0; i < persistedColumnCount; i++) {
                 bw.write(csvEscape(tableModel.getColumnName(i)));
-                if (i < tableModel.getColumnCount() - 1) {
+                if (i < persistedColumnCount - 1) {
                     bw.write(",");
                 }
             }
             bw.newLine();
 
             for (int i = 0; i < tableModel.getRowCount(); i++) {
-                for (int j = 0; j < tableModel.getColumnCount(); j++) {
+                Object itemNameValue = tableModel.getValueAt(i, 0);
+                if (isInvalidInventoryItemName(itemNameValue == null ? null : String.valueOf(itemNameValue))) {
+                    continue;
+                }
+                for (int j = 0; j < persistedColumnCount; j++) {
                     bw.write(csvEscape(tableModel.getValueAt(i, j)));
-                    if (j < tableModel.getColumnCount() - 1) {
+                    if (j < persistedColumnCount - 1) {
                         bw.write(",");
                     }
                 }
@@ -2238,6 +2794,7 @@ public class DrickSysApp extends JFrame {
 
     private void persistAllData() {
         saveInventory();
+        saveItemSupplierAssignments();
         saveProducts();
         saveRecipes();
         saveSalesHistory();
@@ -2303,13 +2860,44 @@ public class DrickSysApp extends JFrame {
     private String normalizeInventoryDate(String value, String fallback) {
         String normalized = value == null ? "" : value.trim();
         if (!normalized.isEmpty() && !normalized.equalsIgnoreCase("null")) {
-            return normalized;
+            String converted = convertInventoryTimestampToDisplay(normalized);
+            return converted == null ? normalized : converted;
         }
         String fallbackValue = fallback == null ? "" : fallback.trim();
         if (!fallbackValue.isEmpty() && !fallbackValue.equalsIgnoreCase("null")) {
-            return fallbackValue;
+            String converted = convertInventoryTimestampToDisplay(fallbackValue);
+            return converted == null ? fallbackValue : converted;
         }
         return "-";
+    }
+
+    private String convertInventoryTimestampToDisplay(String rawValue) {
+        if (rawValue == null || rawValue.isBlank() || rawValue.equals("-")) {
+            return rawValue;
+        }
+        String[] patterns = {"yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd hh:mm:ss a"};
+        for (String pattern : patterns) {
+            try {
+                SimpleDateFormat parser = new SimpleDateFormat(pattern);
+                parser.setLenient(false);
+                Date parsed = parser.parse(rawValue);
+                return dateFormatter.format(parsed);
+            } catch (ParseException ignored) {
+            }
+        }
+        return rawValue;
+    }
+
+    private static final class ExpirationDateSelection {
+        private final JComboBox<String> monthField;
+        private final JComboBox<Integer> dayField;
+        private final JComboBox<Integer> yearField;
+
+        private ExpirationDateSelection(JComboBox<String> monthField, JComboBox<Integer> dayField, JComboBox<Integer> yearField) {
+            this.monthField = monthField;
+            this.dayField = dayField;
+            this.yearField = yearField;
+        }
     }
 
     private void setupSearch() {
@@ -2355,11 +2943,27 @@ public class DrickSysApp extends JFrame {
                 itemNameField.setForeground(TEXT_COLOR);
                 itemQuantityField.setForeground(TEXT_COLOR);
             }
+            refreshStockDetailsPanel();
+        });
+        inventoryTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                if (event.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(event)) {
+                    int row = inventoryTable.rowAtPoint(event.getPoint());
+                    if (row >= 0) {
+                        inventoryTable.setRowSelectionInterval(row, row);
+                        showEditInventoryItemDialog(row);
+                    }
+                }
+            }
         });
     }
 
     private void setupTablePopupMenu() {
         JPopupMenu popupMenu = new JPopupMenu();
+        JMenuItem editItem = new JMenuItem("Edit Selected Item");
+        editItem.addActionListener(this::handleEditSelectedItemAction);
+        popupMenu.add(editItem);
         JMenuItem deleteItem = new JMenuItem("Delete Selected Item");
         deleteItem.addActionListener(this::handleDeleteItemAction);
         popupMenu.add(deleteItem);
@@ -2367,6 +2971,12 @@ public class DrickSysApp extends JFrame {
         inventoryTable.setComponentPopupMenu(popupMenu);
     }
 
+    private void handleEditSelectedItemAction(ActionEvent event) {
+        event.getSource();
+        showEditInventoryItemDialog(inventoryTable.getSelectedRow());
+    }
+
+    @SuppressWarnings("unused")
     private void showOrderDialog() {
         int selectedRow = inventoryTable.getSelectedRow();
         if (selectedRow != -1) {
@@ -2478,6 +3088,7 @@ public class DrickSysApp extends JFrame {
         updateTotalQuantity();
         saveInventory();
         refreshPosItemChoices();
+        refreshStockDetailsPanel();
         String syncStatus = cloudSynced ? "Cloud Synced" : "Local Backup Only";
         String cloudSaleId = cloudSaleIdHolder[0] > 0 ? String.valueOf(cloudSaleIdHolder[0]) : "";
         String fullSaleDetails = "Sale ID: " + saleId
@@ -2607,7 +3218,7 @@ public class DrickSysApp extends JFrame {
                 }
                 try {
                     RecipeLine line = new RecipeLine(parts.get(0), parts.get(1), Integer.parseInt(parts.get(2)));
-                    productRecipes.computeIfAbsent(line.productName, key -> new ArrayList<>()).add(line);
+                    getOrCreateRecipeLines(line.productName).add(line);
                 } catch (NumberFormatException ignored) {
                 }
             }
@@ -2703,6 +3314,7 @@ public class DrickSysApp extends JFrame {
         );
     }
 
+    @SuppressWarnings("unused")
     private void printReceipt(String saleId, List<CartLine> lines, double grandTotal) {
         JTextArea receiptArea = new JTextArea(buildReceiptContent(saleId, lines, grandTotal));
         receiptArea.setEditable(false);
@@ -2833,8 +3445,9 @@ public class DrickSysApp extends JFrame {
 
         JButton addProductButton = createDialogActionButton("Add Product");
         addProductButton.addActionListener(event -> {
+            event.getSource();
             JTextField nameField = new JTextField(18);
-            JComboBox<String> categoryField = createStyledComboBox(new String[]{"Milk Tea", "Coffee", "Drinks", "Snacks", "Pastries", "Other"});
+            JComboBox<String> categoryField = createStyledComboBox(INVENTORY_CATEGORIES);
             JTextField priceField = new JTextField(18);
             JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
             form.setBackground(SECONDARY_COLOR);
@@ -2866,6 +3479,7 @@ public class DrickSysApp extends JFrame {
 
         JButton editProductButton = createDialogActionButton("Edit Product");
         editProductButton.addActionListener(event -> {
+            event.getSource();
             int row = productTable.getSelectedRow();
             if (row < 0) {
                 JOptionPane.showMessageDialog(parent, "Select a product to edit.", "No Selection", JOptionPane.WARNING_MESSAGE);
@@ -2919,6 +3533,7 @@ public class DrickSysApp extends JFrame {
 
         JButton deleteProductButton = createDialogActionButton("Delete Product");
         deleteProductButton.addActionListener(event -> {
+            event.getSource();
             int row = productTable.getSelectedRow();
             if (row < 0) {
                 JOptionPane.showMessageDialog(parent, "Select a product to delete.", "No Selection", JOptionPane.WARNING_MESSAGE);
@@ -2943,6 +3558,7 @@ public class DrickSysApp extends JFrame {
 
         JButton addRecipeButton = createDialogActionButton("Add Recipe Item");
         addRecipeButton.addActionListener(event -> {
+            event.getSource();
             int row = productTable.getSelectedRow();
             if (row < 0) {
                 JOptionPane.showMessageDialog(parent, "Select a product first.", "No Selection", JOptionPane.WARNING_MESSAGE);
@@ -2968,7 +3584,7 @@ public class DrickSysApp extends JFrame {
                 if (itemName == null || itemName.isBlank() || quantityNeeded <= 0) {
                     throw new NumberFormatException();
                 }
-                List<RecipeLine> lines = productRecipes.computeIfAbsent(productName, key -> new ArrayList<>());
+                List<RecipeLine> lines = getOrCreateRecipeLines(productName);
                 lines.removeIf(line -> line.itemName.equalsIgnoreCase(itemName));
                 lines.add(new RecipeLine(productName, itemName, quantityNeeded));
                 saveRecipes();
@@ -2981,6 +3597,7 @@ public class DrickSysApp extends JFrame {
 
         JButton editRecipeButton = createDialogActionButton("Edit Recipe Item");
         editRecipeButton.addActionListener(event -> {
+            event.getSource();
             int productRow = productTable.getSelectedRow();
             int recipeRow = recipeTable.getSelectedRow();
             if (productRow < 0 || recipeRow < 0) {
@@ -3006,7 +3623,7 @@ public class DrickSysApp extends JFrame {
             try {
                 String itemName = String.valueOf(itemField.getSelectedItem());
                 int quantityNeeded = Integer.parseInt(qtyField.getText().trim());
-                List<RecipeLine> lines = productRecipes.computeIfAbsent(productName, key -> new ArrayList<>());
+                List<RecipeLine> lines = getOrCreateRecipeLines(productName);
                 lines.removeIf(line -> line.itemName.equalsIgnoreCase(oldItemName));
                 lines.add(new RecipeLine(productName, itemName, quantityNeeded));
                 saveRecipes();
@@ -3019,6 +3636,7 @@ public class DrickSysApp extends JFrame {
 
         JButton deleteRecipeButton = createDialogActionButton("Delete Recipe Item");
         deleteRecipeButton.addActionListener(event -> {
+            event.getSource();
             int productRow = productTable.getSelectedRow();
             int recipeRow = recipeTable.getSelectedRow();
             if (productRow < 0 || recipeRow < 0) {
@@ -3078,7 +3696,10 @@ public class DrickSysApp extends JFrame {
         dialog.getContentPane().setBackground(SECONDARY_COLOR);
         dialog.add(createProductsWorkspaceTab(dialog), BorderLayout.CENTER);
         JButton closeButton = createDialogActionButton("Close");
-        closeButton.addActionListener(event -> dialog.dispose());
+        closeButton.addActionListener(event -> {
+            event.getSource();
+            dialog.dispose();
+        });
         JPanel footer = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         footer.setBackground(SECONDARY_COLOR);
         footer.add(closeButton);
@@ -3505,7 +4126,7 @@ public class DrickSysApp extends JFrame {
     }
 
     private JPanel createSuppliersWorkspaceTab(Component dialog) {
-        String[] columns = {"ID", "Name", "Contact", "Phone", "Email", "Address", "Status"};
+        String[] columns = {"Item", "Category", "On Hand", "Supplier", "Supplier Status", "Contact"};
         DefaultTableModel model = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -3513,104 +4134,136 @@ public class DrickSysApp extends JFrame {
             }
         };
         JTable table = createWorkspaceTable(model);
+        table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         Runnable refresh = () -> {
             model.setRowCount(0);
-            try {
-                for (SupabaseClient.SupplierRecord supplier : supabaseClient.fetchSuppliers(session)) {
-                    model.addRow(new Object[]{supplier.getSupplierId(), supplier.getSupplierName(), supplier.getContactPerson(), supplier.getPhone(), supplier.getEmail(), supplier.getAddress(), supplier.getStatus()});
-                }
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Failed to load suppliers: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
+            refreshReferenceDirectoriesNow(dialog);
+            for (String itemName : getNonSellableInventoryItems()) {
+                int quantity = findInventoryQuantityByName(itemName);
+                Long supplierId = findAssignedSupplierId(itemName);
+                SupabaseClient.SupplierRecord supplier = supplierId == null ? null : findSupplierRecordById(supplierId);
+                model.addRow(new Object[]{
+                        itemName,
+                        findInventoryCategoryByName(itemName),
+                        quantity < 0 ? "" : quantity,
+                        supplier == null ? "Unassigned" : supplier.getSupplierName(),
+                        supplier == null ? "" : supplier.getStatus(),
+                        supplier == null ? "" : supplier.getPhone()
+                });
             }
         };
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setBackground(SECONDARY_COLOR);
+        JLabel helperLabel = new JLabel("Select multiple items with Ctrl/Shift, or use Select All.");
+        helperLabel.setFont(MAIN_FONT.deriveFont(Font.BOLD));
+        helperLabel.setForeground(TEXT_COLOR.darker());
+        panel.add(helperLabel, BorderLayout.NORTH);
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         actions.setBackground(SECONDARY_COLOR);
         actions.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
-        JButton add = createDialogActionButton("Add");
-        JButton edit = createDialogActionButton("Edit");
-        JButton delete = createDialogActionButton("Delete");
+        JButton add = createDialogActionButton("Link Supplier");
+        JButton edit = createDialogActionButton("Change Supplier");
+        JButton delete = createDialogActionButton("Clear Supplier");
+        JButton selectAll = createDialogActionButton("Select All");
+        JButton clearSelection = createDialogActionButton("Clear Selection");
         JButton refreshBtn = createDialogActionButton("Refresh");
 
         add.addActionListener(event -> {
             event.getSource();
-            JTextField name = new JTextField(18);
-            JTextField contact = new JTextField(18);
-            JTextField phone = new JTextField(18);
-            JTextField email = new JTextField(18);
-            JTextField address = new JTextField(18);
-            JTextField status = new JTextField("active", 18);
-            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
-            form.setBackground(SECONDARY_COLOR);
-            form.add(new JLabel("Supplier Name:")); form.add(name);
-            form.add(new JLabel("Contact Person:")); form.add(contact);
-            form.add(new JLabel("Phone:")); form.add(phone);
-            form.add(new JLabel("Email:")); form.add(email);
-            form.add(new JLabel("Address:")); form.add(address);
-            form.add(new JLabel("Status:")); form.add(status);
-            if (JOptionPane.showConfirmDialog(dialog, form, "Add Supplier", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+            int[] rows = table.getSelectedRows();
+            if (rows.length == 0) {
+                JOptionPane.showMessageDialog(dialog, "Select one or more stock items first.", "No Selection", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            try {
-                supabaseClient.addSupplier(session, name.getText().trim(), contact.getText().trim(), phone.getText().trim(), email.getText().trim(), address.getText().trim(), status.getText().trim().isEmpty() ? "active" : status.getText().trim());
-                refresh.run();
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Add supplier failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
+            if (supplierDirectory.isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "No suppliers available. Add suppliers first, then link them here.", "No Suppliers", JOptionPane.WARNING_MESSAGE);
+                return;
             }
+            JComboBox<SupabaseClient.SupplierRecord> supplierField = new JComboBox<>(supplierDirectory.toArray(SupabaseClient.SupplierRecord[]::new));
+            supplierField.setRenderer(new DefaultListCellRenderer() {
+                @Override
+                public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+                    Object displayValue = value;
+                    if (value instanceof SupabaseClient.SupplierRecord supplier) {
+                        displayValue = supplier.getSupplierName() + " (" + supplier.getStatus() + ")";
+                    }
+                    return super.getListCellRendererComponent(list, displayValue, index, isSelected, cellHasFocus);
+                }
+            });
+            String dialogTitle = rows.length == 1 ? "Link Supplier to " + String.valueOf(model.getValueAt(rows[0], 0)) : "Link Supplier to " + rows.length + " selected items";
+            if (JOptionPane.showConfirmDialog(dialog, supplierField, dialogTitle, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+                return;
+            }
+            Object selected = supplierField.getSelectedItem();
+            if (!(selected instanceof SupabaseClient.SupplierRecord supplier)) {
+                return;
+            }
+            List<String> selectedItems = new ArrayList<>();
+            for (int row : rows) {
+                selectedItems.add(String.valueOf(model.getValueAt(row, 0)));
+            }
+            for (String itemName : selectedItems) {
+                itemSupplierAssignments.put(normalizeInventoryKey(itemName), supplier.getSupplierId());
+            }
+            saveItemSupplierAssignments();
+            if (isCloudConfigured()) {
+                queueCloudOperation("assign item supplier", () -> {
+                    for (String itemName : selectedItems) {
+                        supabaseClient.assignSupplierToItem(session, itemName, supplier.getSupplierId(), true);
+                    }
+                });
+            }
+            refresh.run();
         });
 
         edit.addActionListener(event -> {
             event.getSource();
             int row = table.getSelectedRow();
             if (row < 0) {
-                JOptionPane.showMessageDialog(dialog, "Select a supplier to edit.", "No Selection", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(dialog, "Select a stock item first.", "No Selection", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            long id = Long.parseLong(String.valueOf(model.getValueAt(row, 0)));
-            JTextField name = new JTextField(String.valueOf(model.getValueAt(row, 1)), 18);
-            JTextField contact = new JTextField(String.valueOf(model.getValueAt(row, 2)), 18);
-            JTextField phone = new JTextField(String.valueOf(model.getValueAt(row, 3)), 18);
-            JTextField email = new JTextField(String.valueOf(model.getValueAt(row, 4)), 18);
-            JTextField address = new JTextField(String.valueOf(model.getValueAt(row, 5)), 18);
-            JTextField status = new JTextField(String.valueOf(model.getValueAt(row, 6)), 18);
-            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
-            form.setBackground(SECONDARY_COLOR);
-            form.add(new JLabel("Supplier Name:")); form.add(name);
-            form.add(new JLabel("Contact Person:")); form.add(contact);
-            form.add(new JLabel("Phone:")); form.add(phone);
-            form.add(new JLabel("Email:")); form.add(email);
-            form.add(new JLabel("Address:")); form.add(address);
-            form.add(new JLabel("Status:")); form.add(status);
-            if (JOptionPane.showConfirmDialog(dialog, form, "Edit Supplier", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
-                return;
-            }
-            try {
-                supabaseClient.updateSupplierById(session, id, name.getText().trim(), contact.getText().trim(), phone.getText().trim(), email.getText().trim(), address.getText().trim(), status.getText().trim());
-                refresh.run();
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Edit supplier failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
-            }
+            add.doClick();
         });
 
         delete.addActionListener(event -> {
             event.getSource();
-            int row = table.getSelectedRow();
-            if (row < 0) {
-                JOptionPane.showMessageDialog(dialog, "Select a supplier to delete.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            int[] rows = table.getSelectedRows();
+            if (rows.length == 0) {
+                JOptionPane.showMessageDialog(dialog, "Select one or more stock items first.", "No Selection", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            long id = Long.parseLong(String.valueOf(model.getValueAt(row, 0)));
-            if (JOptionPane.showConfirmDialog(dialog, "Delete selected supplier?", "Confirm Delete", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+            if (JOptionPane.showConfirmDialog(dialog, "Clear supplier link for " + rows.length + " selected item(s)?", "Clear Supplier", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
                 return;
             }
-            try {
-                supabaseClient.deleteSupplierById(session, id);
-                refresh.run();
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Delete supplier failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
+            List<String> selectedItems = new ArrayList<>();
+            for (int row : rows) {
+                String itemName = String.valueOf(model.getValueAt(row, 0));
+                selectedItems.add(itemName);
+                itemSupplierAssignments.remove(normalizeInventoryKey(itemName));
             }
+            saveItemSupplierAssignments();
+            if (isCloudConfigured()) {
+                queueCloudOperation("clear item supplier", () -> {
+                    for (String itemName : selectedItems) {
+                        supabaseClient.clearSupplierAssignmentsForItem(session, itemName);
+                    }
+                });
+            }
+            refresh.run();
+        });
+
+        selectAll.addActionListener(event -> {
+            event.getSource();
+            if (table.getRowCount() > 0) {
+                table.setRowSelectionInterval(0, table.getRowCount() - 1);
+            }
+        });
+
+        clearSelection.addActionListener(event -> {
+            event.getSource();
+            table.clearSelection();
         });
 
         refreshBtn.addActionListener(event -> {
@@ -3621,6 +4274,8 @@ public class DrickSysApp extends JFrame {
         actions.add(add);
         actions.add(edit);
         actions.add(delete);
+        actions.add(selectAll);
+        actions.add(clearSelection);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
         if (isCloudConfigured()) {
@@ -3630,7 +4285,7 @@ public class DrickSysApp extends JFrame {
     }
 
     private JPanel createExpirationsWorkspaceTab(Component dialog) {
-        String[] columns = {"ID", "Item", "Unit Type", "Quantity", "Expiration Date"};
+        String[] columns = {"Item", "Category", "On Hand", "Supplier", "Expiration Date", "Unit Type", "Exp Qty", "Status"};
         DefaultTableModel model = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -3638,18 +4293,31 @@ public class DrickSysApp extends JFrame {
             }
         };
         JTable table = createWorkspaceTable(model);
+        table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         Runnable refresh = () -> {
             model.setRowCount(0);
-            try {
-                for (SupabaseClient.ExpirationRecord expiration : supabaseClient.fetchExpirations(session)) {
-                    model.addRow(new Object[]{expiration.getExpirationId(), expiration.getItemName(), expiration.getUnitType(), expiration.getUnitQuantity(), expiration.getExpirationDate()});
-                }
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Failed to load expirations: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
+            refreshReferenceDirectoriesNow(dialog);
+            for (String itemName : getNonSellableInventoryItems()) {
+                SupabaseClient.ExpirationRecord expiration = findNearestExpirationRecord(itemName);
+                int onHand = findInventoryQuantityByName(itemName);
+                model.addRow(new Object[]{
+                        itemName,
+                        findInventoryCategoryByName(itemName),
+                        onHand < 0 ? "" : onHand,
+                        buildSupplierSummary(itemName),
+                        expiration == null ? "" : expiration.getExpirationDate(),
+                        expiration == null ? "" : expiration.getUnitType(),
+                        expiration == null ? "" : expiration.getUnitQuantity(),
+                        buildExpirationSummary(itemName)
+                });
             }
         };
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setBackground(SECONDARY_COLOR);
+        JLabel helperLabel = new JLabel("Select multiple items with Ctrl/Shift, or use Select All.");
+        helperLabel.setFont(MAIN_FONT.deriveFont(Font.BOLD));
+        helperLabel.setForeground(TEXT_COLOR.darker());
+        panel.add(helperLabel, BorderLayout.NORTH);
         panel.add(new JScrollPane(table), BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         actions.setBackground(SECONDARY_COLOR);
@@ -3657,30 +4325,73 @@ public class DrickSysApp extends JFrame {
         JButton add = createDialogActionButton("Add");
         JButton edit = createDialogActionButton("Edit");
         JButton delete = createDialogActionButton("Delete");
+        JButton selectAll = createDialogActionButton("Select All");
+        JButton clearSelection = createDialogActionButton("Clear Selection");
         JButton refreshBtn = createDialogActionButton("Refresh");
 
         add.addActionListener(event -> {
             event.getSource();
-            JTextField item = new JTextField(18);
+            int[] selectedRows = table.getSelectedRows();
+            List<String> stockItems = new ArrayList<>();
+            if (selectedRows.length > 0) {
+                for (int row : selectedRows) {
+                    stockItems.add(String.valueOf(model.getValueAt(row, 0)));
+                }
+            } else {
+                stockItems = getNonSellableInventoryItems();
+            }
+            if (stockItems.isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "No stock items found.", "No Items", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            final JComboBox<String> itemField;
             JTextField unit = new JTextField(18);
             JTextField qty = new JTextField(18);
-            JTextField date = new JTextField("YYYY-MM-DD", 18);
+            ExpirationDateSelection dateSelection = createExpirationDateSelection(LocalDate.now());
             JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
             form.setBackground(SECONDARY_COLOR);
-            form.add(new JLabel("Item Name:")); form.add(item);
+            form.add(new JLabel("Apply To:")); form.add(new JLabel(selectedRows.length > 0 ? stockItems.size() + " selected item(s)" : "Choose below"));
+            if (selectedRows.length == 0) {
+                itemField = new JComboBox<>(stockItems.toArray(String[]::new));
+                form.add(new JLabel("Item Name:")); form.add(itemField);
+            } else {
+                itemField = null;
+            }
             form.add(new JLabel("Unit Type:")); form.add(unit);
             form.add(new JLabel("Unit Quantity:")); form.add(qty);
-            form.add(new JLabel("Expiration Date:")); form.add(date);
+            form.add(new JLabel("Expiration Date:")); form.add(createExpirationDateSelectionPanel(dateSelection));
             if (JOptionPane.showConfirmDialog(dialog, form, "Add Expiration", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
                 return;
             }
-            if (!qty.getText().trim().matches("\\d+") || !date.getText().trim().matches("\\d{4}-\\d{2}-\\d{2}")) {
-                JOptionPane.showMessageDialog(dialog, "Quantity must be numeric and date must be YYYY-MM-DD.", "Validation", JOptionPane.WARNING_MESSAGE);
+            if (!qty.getText().trim().matches("\\d+")) {
+                JOptionPane.showMessageDialog(dialog, "Quantity must be numeric.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String expirationDate = getSelectedExpirationDate(dateSelection);
+            if (expirationDate == null) {
+                JOptionPane.showMessageDialog(dialog, "Please choose a valid month, day, and year.", "Validation", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             try {
-                supabaseClient.addExpiration(session, item.getText().trim(), unit.getText().trim(), Integer.parseInt(qty.getText().trim()), date.getText().trim());
+                if (selectedRows.length == 0) {
+                    Object selectedItem = itemField == null ? null : itemField.getSelectedItem();
+                    if (!(selectedItem instanceof String singleItem) || singleItem.isBlank()) {
+                        JOptionPane.showMessageDialog(dialog, "Choose an item first.", "Validation", JOptionPane.WARNING_MESSAGE);
+                        return;
+                    }
+                    supabaseClient.addExpiration(session, singleItem, unit.getText().trim(), Integer.parseInt(qty.getText().trim()), expirationDate);
+                } else {
+                    for (String itemName : stockItems) {
+                        SupabaseClient.ExpirationRecord existing = findNearestExpirationRecord(itemName);
+                        if (existing == null) {
+                            supabaseClient.addExpiration(session, itemName, unit.getText().trim(), Integer.parseInt(qty.getText().trim()), expirationDate);
+                        } else {
+                            supabaseClient.updateExpirationById(session, existing.getExpirationId(), itemName, unit.getText().trim(), Integer.parseInt(qty.getText().trim()), expirationDate);
+                        }
+                    }
+                }
                 refresh.run();
+                refreshReferenceDirectoriesAsync(false);
             } catch (IOException | InterruptedException ex) {
                 JOptionPane.showMessageDialog(dialog, "Add expiration failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
             }
@@ -3688,32 +4399,56 @@ public class DrickSysApp extends JFrame {
 
         edit.addActionListener(event -> {
             event.getSource();
-            int row = table.getSelectedRow();
-            if (row < 0) {
-                JOptionPane.showMessageDialog(dialog, "Select an expiration row to edit.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            int[] rows = table.getSelectedRows();
+            if (rows.length == 0) {
+                JOptionPane.showMessageDialog(dialog, "Select one or more stock items to edit expiration.", "No Selection", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            long id = Long.parseLong(String.valueOf(model.getValueAt(row, 0)));
-            JTextField item = new JTextField(String.valueOf(model.getValueAt(row, 1)), 18);
-            JTextField unit = new JTextField(String.valueOf(model.getValueAt(row, 2)), 18);
-            JTextField qty = new JTextField(String.valueOf(model.getValueAt(row, 3)), 18);
-            JTextField date = new JTextField(String.valueOf(model.getValueAt(row, 4)), 18);
+            List<String> itemNames = new ArrayList<>();
+            SupabaseClient.ExpirationRecord seedExpiration = null;
+            for (int row : rows) {
+                String itemName = String.valueOf(model.getValueAt(row, 0));
+                itemNames.add(itemName);
+                if (seedExpiration == null) {
+                    seedExpiration = findNearestExpirationRecord(itemName);
+                }
+            }
+            if (seedExpiration == null) {
+                JOptionPane.showMessageDialog(dialog, "None of the selected items have expiration records yet. Use Add first.", "No Expiration", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            JTextField unit = new JTextField(seedExpiration.getUnitType(), 18);
+            JTextField qty = new JTextField(String.valueOf(seedExpiration.getUnitQuantity()), 18);
+            ExpirationDateSelection dateSelection = createExpirationDateSelection(parseExpirationDateSafe(seedExpiration.getExpirationDate()));
             JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
             form.setBackground(SECONDARY_COLOR);
-            form.add(new JLabel("Item Name:")); form.add(item);
+            form.add(new JLabel("Apply To:")); form.add(new JLabel(itemNames.size() == 1 ? itemNames.get(0) : itemNames.size() + " selected item(s)"));
             form.add(new JLabel("Unit Type:")); form.add(unit);
             form.add(new JLabel("Unit Quantity:")); form.add(qty);
-            form.add(new JLabel("Expiration Date:")); form.add(date);
+            form.add(new JLabel("Expiration Date:")); form.add(createExpirationDateSelectionPanel(dateSelection));
             if (JOptionPane.showConfirmDialog(dialog, form, "Edit Expiration", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
                 return;
             }
-            if (!qty.getText().trim().matches("\\d+") || !date.getText().trim().matches("\\d{4}-\\d{2}-\\d{2}")) {
-                JOptionPane.showMessageDialog(dialog, "Quantity must be numeric and date must be YYYY-MM-DD.", "Validation", JOptionPane.WARNING_MESSAGE);
+            if (!qty.getText().trim().matches("\\d+")) {
+                JOptionPane.showMessageDialog(dialog, "Quantity must be numeric.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String expirationDate = getSelectedExpirationDate(dateSelection);
+            if (expirationDate == null) {
+                JOptionPane.showMessageDialog(dialog, "Please choose a valid month, day, and year.", "Validation", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             try {
-                supabaseClient.updateExpirationById(session, id, item.getText().trim(), unit.getText().trim(), Integer.parseInt(qty.getText().trim()), date.getText().trim());
+                for (String itemName : itemNames) {
+                    SupabaseClient.ExpirationRecord expiration = findNearestExpirationRecord(itemName);
+                    if (expiration == null) {
+                        supabaseClient.addExpiration(session, itemName, unit.getText().trim(), Integer.parseInt(qty.getText().trim()), expirationDate);
+                    } else {
+                        supabaseClient.updateExpirationById(session, expiration.getExpirationId(), itemName, unit.getText().trim(), Integer.parseInt(qty.getText().trim()), expirationDate);
+                    }
+                }
                 refresh.run();
+                refreshReferenceDirectoriesAsync(false);
             } catch (IOException | InterruptedException ex) {
                 JOptionPane.showMessageDialog(dialog, "Edit expiration failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
             }
@@ -3721,18 +4456,32 @@ public class DrickSysApp extends JFrame {
 
         delete.addActionListener(event -> {
             event.getSource();
-            int row = table.getSelectedRow();
-            if (row < 0) {
-                JOptionPane.showMessageDialog(dialog, "Select an expiration row to delete.", "No Selection", JOptionPane.WARNING_MESSAGE);
+            int[] rows = table.getSelectedRows();
+            if (rows.length == 0) {
+                JOptionPane.showMessageDialog(dialog, "Select one or more stock items to delete expiration.", "No Selection", JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            long id = Long.parseLong(String.valueOf(model.getValueAt(row, 0)));
-            if (JOptionPane.showConfirmDialog(dialog, "Delete selected expiration?", "Confirm Delete", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+            List<SupabaseClient.ExpirationRecord> expirationsToDelete = new ArrayList<>();
+            for (int row : rows) {
+                String itemName = String.valueOf(model.getValueAt(row, 0));
+                SupabaseClient.ExpirationRecord expiration = findNearestExpirationRecord(itemName);
+                if (expiration != null) {
+                    expirationsToDelete.add(expiration);
+                }
+            }
+            if (expirationsToDelete.isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "The selected item(s) have no expiration records to delete.", "No Expiration", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            if (JOptionPane.showConfirmDialog(dialog, "Delete expiration for " + expirationsToDelete.size() + " selected item(s)?", "Confirm Delete", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
                 return;
             }
             try {
-                supabaseClient.deleteExpirationById(session, id);
+                for (SupabaseClient.ExpirationRecord expiration : expirationsToDelete) {
+                    supabaseClient.deleteExpirationById(session, expiration.getExpirationId());
+                }
                 refresh.run();
+                refreshReferenceDirectoriesAsync(false);
             } catch (IOException | InterruptedException ex) {
                 JOptionPane.showMessageDialog(dialog, "Delete expiration failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
             }
@@ -3743,9 +4492,23 @@ public class DrickSysApp extends JFrame {
             refresh.run();
         });
 
+        selectAll.addActionListener(event -> {
+            event.getSource();
+            if (table.getRowCount() > 0) {
+                table.setRowSelectionInterval(0, table.getRowCount() - 1);
+            }
+        });
+
+        clearSelection.addActionListener(event -> {
+            event.getSource();
+            table.clearSelection();
+        });
+
         actions.add(add);
         actions.add(edit);
         actions.add(delete);
+        actions.add(selectAll);
+        actions.add(clearSelection);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
         if (isCloudConfigured()) {
@@ -3882,7 +4645,7 @@ public class DrickSysApp extends JFrame {
     }
 
     private JPanel createStockOutWorkspaceTab(Component dialog) {
-        String[] columns = {"ID", "Date", "Reason", "Item", "Quantity", "Cost"};
+        String[] columns = {"Item", "Category", "On Hand", "Supplier", "Last Stock Out", "Last Qty", "Stock Status"};
         DefaultTableModel model = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -3892,12 +4655,19 @@ public class DrickSysApp extends JFrame {
         JTable table = createWorkspaceTable(model);
         Runnable refresh = () -> {
             model.setRowCount(0);
-            try {
-                for (SupabaseClient.StockOutItemRecord record : supabaseClient.fetchStockOutItems(session)) {
-                    model.addRow(new Object[]{record.getStockoutItemId(), record.getStockoutDate(), record.getReason(), record.getItemName(), record.getQuantity(), record.getCost()});
-                }
-            } catch (IOException | InterruptedException ex) {
-                JOptionPane.showMessageDialog(dialog, "Failed to load stock out records: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
+            refreshReferenceDirectoriesNow(dialog);
+            for (String itemName : getNonSellableInventoryItems()) {
+                int onHand = findInventoryQuantityByName(itemName);
+                SupabaseClient.StockOutItemRecord latest = findLatestStockOutRecord(itemName);
+                model.addRow(new Object[]{
+                        itemName,
+                        findInventoryCategoryByName(itemName),
+                        onHand < 0 ? "" : onHand,
+                        buildSupplierSummary(itemName),
+                        latest == null ? "" : latest.getStockoutDate(),
+                        latest == null ? "" : latest.getQuantity(),
+                        onHand < 0 ? "Missing from stock" : buildStockStatusSummary(onHand)
+                });
             }
         };
         JPanel panel = new JPanel(new BorderLayout(8, 8));
@@ -3911,13 +4681,18 @@ public class DrickSysApp extends JFrame {
 
         record.addActionListener(event -> {
             event.getSource();
-            JTextField item = new JTextField(18);
+            int selectedRow = table.getSelectedRow();
+            if (selectedRow < 0) {
+                JOptionPane.showMessageDialog(dialog, "Select a stock item first.", "No Selection", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String selectedItemName = String.valueOf(model.getValueAt(selectedRow, 0));
             JTextField qty = new JTextField(18);
             JTextField cost = new JTextField(18);
             JTextField reason = new JTextField(18);
             JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
             form.setBackground(SECONDARY_COLOR);
-            form.add(new JLabel("Item Name:")); form.add(item);
+            form.add(new JLabel("Item Name:")); form.add(new JLabel(selectedItemName));
             form.add(new JLabel("Quantity:")); form.add(qty);
             form.add(new JLabel("Cost:")); form.add(cost);
             form.add(new JLabel("Reason:")); form.add(reason);
@@ -3936,10 +4711,11 @@ public class DrickSysApp extends JFrame {
                 return;
             }
             try {
-                supabaseClient.recordItemStockOut(session, item.getText().trim(), Integer.parseInt(qty.getText().trim()), parsedCost, reason.getText().trim());
+                supabaseClient.recordItemStockOut(session, selectedItemName, Integer.parseInt(qty.getText().trim()), parsedCost, reason.getText().trim());
                 refresh.run();
                 loadInventory();
                 updateTotalQuantity();
+                refreshReferenceDirectoriesAsync(false);
             } catch (IOException | InterruptedException ex) {
                 JOptionPane.showMessageDialog(dialog, "Record stock out failed: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
             }
@@ -4023,11 +4799,13 @@ public class DrickSysApp extends JFrame {
         showActivityLogsDialog();
     }
 
+    @SuppressWarnings("unused")
     private void handleShowInventoryHubDialogAction(ActionEvent event) {
         event.getSource();
         showInventoryHubDialog();
     }
 
+    @SuppressWarnings("unused")
     private void handleShowProductsDialogAction(ActionEvent event) {
         event.getSource();
         showProductsDialog();
