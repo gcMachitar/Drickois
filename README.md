@@ -28,3 +28,9 @@ ERD-first setup
 How to Run
 Debug/run:
 DrickSysApp
+
+Build jar on Windows:
+`.\BuildDrickSysApp.cmd`
+
+Run packaged app:
+`.\RunDrickSysApp.cmd`

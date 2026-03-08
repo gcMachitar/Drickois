@@ -1,0 +1,107 @@
+Timestamp,Action,Details
+2026-03-07 20:29:41,logout,User logged out.
+2026-03-07 20:40:09,logout,User logged out.
+2026-03-07 21:40:33,logout,User logged out.
+2026-03-08 02:19:40,delete_item,Deleted: hi
+2026-03-08 02:19:43,delete_item,Deleted: 67
+2026-03-08 02:19:46,delete_item,Deleted: Natchos
+2026-03-08 02:19:49,delete_item,Deleted: Himalayan Coffe Bean
+2026-03-08 02:19:51,delete_item,Deleted: Zues
+2026-03-08 02:19:56,delete_item,Deleted: mark
+2026-03-08 02:21:08,add_item,"Added: one, qty=12, price=1.0"
+2026-03-08 03:04:21,add_item,"Added: Coffee Beans, qty=18, price=100.0"
+2026-03-08 03:05:38,add_item,"Added: Bobba, qty=16, price=20.0"
+2026-03-08 03:06:06,add_item,"Added: Cheese, qty=21, price=12.0"
+2026-03-08 03:53:28,order_item,"Sale completed [DS-20260308-035323-084]: Taro x1, Add On Bobba x1, total=130.0"
+2026-03-08 03:54:17,order_item,"Sale completed [DS-20260308-035408-939]: Late x1, Add On Bobba x1, total=90.0"
+2026-03-08 23:51:43,delete_item,Deleted: mark
+2026-03-08 23:51:45,delete_item,Deleted: one
+2026-03-08 23:51:52,delete_item,Deleted: Coffee Beans
+2026-03-08 23:51:54,delete_item,Deleted: Bobba
+2026-03-08 23:51:56,delete_item,Deleted: Biscoff
+2026-03-08 23:52:06,add_item,"Added: Ube, qty=20"
+2026-03-08 23:52:16,add_item,"Added: Java, qty=20"
+2026-03-08 23:52:20,add_item,"Added: Thai, qty=20"
+2026-03-08 23:52:22,add_item,"Added: Taro, qty=20"
+2026-03-08 23:52:28,add_item,"Added: Okinawa, qty=20"
+2026-03-08 23:52:39,add_item,"Added: Redvelvet, qty=10"
+2026-03-08 23:52:44,add_item,"Added: Wintermelon, qty=10"
+2026-03-08 23:52:49,add_item,"Added: Dark Chocolate, qty=10"
+2026-03-08 23:52:56,add_item,"Added: Salted Caramel, qty=10"
+2026-03-08 23:53:11,add_item,"Added: Cookies n Cream, qty=10"
+2026-03-08 23:53:22,add_item,"Added: Double Dutch, qty=10"
+2026-03-08 23:53:28,add_item,"Added: Belgian Chocolate, qty=10"
+2026-03-08 23:53:32,add_item,"Added: Matcha, qty=10"
+2026-03-08 23:53:39,add_item,"Added: Biscoff Powder, qty=10"
+2026-03-08 23:53:43,add_item,"Added: Black Tea, qty=10"
+2026-03-08 23:53:51,add_item,"Added: Frappe Powder, qty=10"
+2026-03-08 23:53:56,add_item,"Added: Sugar Syrop, qty=10"
+2026-03-08 23:54:15,add_item,"Added: Topioca Pearls, qty=50"
+2026-03-08 23:54:27,add_item,"Added: Fruit Jelly, qty=10"
+2026-03-08 23:54:32,delete_item,Deleted: Fruit Jelly
+2026-03-08 23:54:41,add_item,"Added: Fruit Jelly, qty=10"
+2026-03-08 23:54:48,add_item,"Added: Nata De Coco, qty=10"
+2026-03-08 23:54:55,add_item,"Added: Popping Bobba, qty=10"
+2026-03-08 23:55:03,add_item,"Added: Cheescake Powder, qty=10"
+2026-03-08 23:55:28,add_item,"Added: Full Cream Milk, qty=10"
+2026-03-08 23:55:39,add_item,"Added: Coffee Beans, qty=10"
+2026-03-08 23:55:50,add_item,"Added: Caramel Syrup, qty=10"
+2026-03-08 23:56:05,add_item,"Added: Hazel Nut Syrup, qty=10"
+2026-03-08 23:56:13,add_item,"Added: Dark Chocolate Sauce, qty=10"
+2026-03-08 23:56:19,add_item,"Added: White Choco Sauce, qty=10"
+2026-03-08 23:56:29,add_item,"Added: Choco Chips, qty=10"
+2026-03-08 23:56:48,delete_item,Deleted: Hazel Nut Syrup
+2026-03-08 23:56:51,delete_item,Deleted: White Choco Sauce
+2026-03-08 23:56:58,add_item,"Added: White Choco Sauce, qty=10"
+2026-03-08 23:57:07,add_item,"Added: Hazel Nut Syrup, qty=10"
+2026-03-08 23:57:23,add_item,"Added: Sprite, qty=10"
+2026-03-08 23:57:27,add_item,"Added: Blueberry, qty=10"
+2026-03-08 23:57:34,add_item,"Added: Strawberry, qty=10"
+2026-03-08 23:57:40,add_item,"Added: Passion Fruit, qty=10"
+2026-03-08 23:57:47,add_item,"Added: Green Apple, qty=10"
+2026-03-08 23:57:55,add_item,"Added: Lemon, qty=10"
+2026-03-08 23:58:01,add_item,"Added: Lemon Syrup, qty=10"
+2026-03-08 23:58:07,add_item,"Added: Honey, qty=10"
+2026-03-08 23:58:14,add_item,"Added: Yakult, qty=10"
+2026-03-08 23:58:25,add_item,"Added: Cucumber Lemonade, qty=10"
+2026-03-08 23:58:41,add_item,"Added: Mango Chunks, qty=10"
+2026-03-08 23:58:48,add_item,"Added: Mango Puree, qty=10"
+2026-03-08 23:58:57,add_item,"Added: Crushed Grahams, qty=10"
+2026-03-08 23:59:09,add_item,"Added: Evaporated Milk, qty=10"
+2026-03-08 23:59:18,add_item,"Added: Vivio Whipped Cream, qty=10"
+2026-03-08 23:59:32,add_item,"Added: Boreen Condensed Milk, qty=10"
+2026-03-08 23:59:46,add_item,"Added: Pasta, qty=10"
+2026-03-08 23:59:50,add_item,"Added: Ham, qty=10"
+2026-03-08 23:59:58,add_item,"Added: Mushroom, qty=10"
+2026-03-09 00:00:08,add_item,"Added: Grounded Beef, qty=10"
+2026-03-09 00:00:15,add_item,"Added: Ground Pork, qty=10"
+2026-03-09 00:00:22,add_item,"Added: Spanish Sardines, qty=10"
+2026-03-09 00:01:08,add_item,"Added: Olives, qty=10"
+2026-03-09 00:01:17,add_item,"Added: Fries, qty=10"
+2026-03-09 00:01:25,add_item,"Added: Nachos, qty=10"
+2026-03-09 00:01:36,add_item,"Added: Chicken Fillet, qty=10"
+2026-03-09 00:01:45,add_item,"Added: Ice Cream, qty=10"
+2026-03-09 00:04:51,add_item,"Added: Rice, qty=10"
+2026-03-09 00:05:05,add_item,"Added: Cheese (quickmelt), qty=10"
+2026-03-09 00:05:24,add_item,"Added: Ketchup, qty=10"
+2026-03-09 00:05:31,delete_item,Deleted: mark
+2026-03-09 00:11:06,delete_item,Deleted: mark
+2026-03-09 00:11:26,update_item,"Updated: Salted Caramel -> Salted Caramel, qty=10"
+2026-03-09 00:11:46,add_item,"Added: Onion, qty=10"
+2026-03-09 00:11:51,add_item,"Added: Tomato, qty=10"
+2026-03-09 00:11:55,add_item,"Added: Garlic, qty=10"
+2026-03-09 00:12:02,add_item,"Added: Cucumber, qty=10"
+2026-03-09 00:15:40,delete_item,Deleted: mark
+2026-03-09 00:16:02,update_item,"Updated: Garlic -> Garlic, qty=10"
+2026-03-09 00:16:07,update_item,"Updated: Tomato -> Tomato, qty=10"
+2026-03-09 00:16:26,add_item,"Added: Butter, qty=10"
+2026-03-09 00:16:43,add_item,"Added: All Purpose Flour, qty=10"
+2026-03-09 00:16:55,add_item,"Added: Cake Flour, qty=10"
+2026-03-09 00:17:06,add_item,"Added: Angel Evaporada, qty=10"
+2026-03-09 00:17:16,add_item,"Added: Dishwashing, qty=10"
+2026-03-09 00:17:27,add_item,"Added: Detergent Powder, qty=6"
+2026-03-09 00:17:35,add_item,"Added: Bowl Deodorizer, qty=7"
+2026-03-09 00:17:45,add_item,"Added: Zonrox, qty=8"
+2026-03-09 00:17:52,add_item,"Added: Domex, qty=8"
+2026-03-09 00:18:04,add_item,"Added: Alcohol, qty=8"
+2026-03-09 00:18:13,add_item,"Added: Tissue, qty=8"

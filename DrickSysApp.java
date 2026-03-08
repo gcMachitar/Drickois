@@ -56,15 +56,15 @@ public class DrickSysApp extends JFrame {
     private final transient SupabaseSession session;
 
     private final SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss a");
-    private static final String INVENTORY_FILE = "inventory.csv";
-    private static final String PRODUCTS_FILE = "products.csv";
-    private static final String RECIPES_FILE = "product_recipes.csv";
-    private static final String ITEM_SUPPLIERS_FILE = "item_suppliers.csv";
-    private static final String INVENTORY_TEXT_BACKUP_FILE = "inventory_backup.txt";
-    private static final String SALES_HISTORY_FILE = "sales_history.csv";
-    private static final String SALES_TEXT_BACKUP_FILE = "sales_backup.txt";
-    private static final String ACTIVITY_LOG_FILE = "activity_logs.csv";
-    private static final String RECEIPTS_DIR = "receipts";
+    private static final String INVENTORY_FILE = AppPaths.dataFile("inventory.csv").toString();
+    private static final String PRODUCTS_FILE = AppPaths.dataFile("products.csv").toString();
+    private static final String RECIPES_FILE = AppPaths.dataFile("product_recipes.csv").toString();
+    private static final String ITEM_SUPPLIERS_FILE = AppPaths.dataFile("item_suppliers.csv").toString();
+    private static final String INVENTORY_TEXT_BACKUP_FILE = AppPaths.dataFile("inventory_backup.txt").toString();
+    private static final String SALES_HISTORY_FILE = AppPaths.dataFile("sales_history.csv").toString();
+    private static final String SALES_TEXT_BACKUP_FILE = AppPaths.dataFile("sales_backup.txt").toString();
+    private static final String ACTIVITY_LOG_FILE = AppPaths.dataFile("activity_logs.csv").toString();
+    private static final String RECEIPTS_DIR = AppPaths.receiptsDirectory().toString();
     private static final String DEFAULT_ITEM_NAME_PLACEHOLDER = "e.g., Cafe Latte";
     private static final String DEFAULT_QUANTITY_PLACEHOLDER = "e.g., 25";
     private static final String DEFAULT_PRICE_PLACEHOLDER = "e.g., 125.50";
@@ -165,6 +165,7 @@ public class DrickSysApp extends JFrame {
         this.loginFrame = loginFrame;
         this.supabaseClient = supabaseClient;
         this.session = session;
+        initializeAppStorage();
 
         setTitle("Dricko's");
         ImageIcon appIcon = loadResourceIcon("/resources/myicon.png");
@@ -239,6 +240,25 @@ public class DrickSysApp extends JFrame {
             startInitialCloudSync();
             refreshReferenceDirectoriesAsync(false);
         });
+    }
+
+    private void initializeAppStorage() {
+        try {
+            AppPaths.ensureDataDirectoryExists();
+            AppPaths.migrateWorkingFileIfMissing("inventory.csv");
+            AppPaths.migrateWorkingFileIfMissing("products.csv");
+            AppPaths.migrateWorkingFileIfMissing("product_recipes.csv");
+            AppPaths.migrateWorkingFileIfMissing("item_suppliers.csv");
+            AppPaths.migrateWorkingFileIfMissing("sales_history.csv");
+            AppPaths.migrateWorkingFileIfMissing("activity_logs.csv");
+            AppPaths.migrateWorkingFileIfMissing("supabase.properties");
+            AppPaths.seedBundledFileIfMissing("/inventory.csv", "inventory.csv");
+            AppPaths.seedBundledFileIfMissing("/products.csv", "products.csv");
+            AppPaths.seedBundledFileIfMissing("/product_recipes.csv", "product_recipes.csv");
+            AppPaths.seedBundledFileIfMissing("/item_suppliers.csv", "item_suppliers.csv");
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed to prepare app storage", e);
+        }
     }
 
     private void initializeTable() {
@@ -4278,9 +4298,7 @@ public class DrickSysApp extends JFrame {
         actions.add(clearSelection);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
-        if (isCloudConfigured()) {
-            SwingUtilities.invokeLater(refresh);
-        }
+        SwingUtilities.invokeLater(refresh);
         return panel;
     }
 
@@ -4511,9 +4529,7 @@ public class DrickSysApp extends JFrame {
         actions.add(clearSelection);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
-        if (isCloudConfigured()) {
-            SwingUtilities.invokeLater(refresh);
-        }
+        SwingUtilities.invokeLater(refresh);
         return panel;
     }
 
@@ -4638,9 +4654,7 @@ public class DrickSysApp extends JFrame {
         actions.add(delete);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
-        if (isCloudConfigured()) {
-            SwingUtilities.invokeLater(refresh);
-        }
+        SwingUtilities.invokeLater(refresh);
         return panel;
     }
 
@@ -4729,9 +4743,7 @@ public class DrickSysApp extends JFrame {
         actions.add(record);
         actions.add(refreshBtn);
         panel.add(actions, BorderLayout.SOUTH);
-        if (isCloudConfigured()) {
-            SwingUtilities.invokeLater(refresh);
-        }
+        SwingUtilities.invokeLater(refresh);
         return panel;
     }
 

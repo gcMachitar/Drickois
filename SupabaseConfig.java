@@ -59,6 +59,7 @@ public final class SupabaseConfig {
     private static Path[] candidatePaths() {
         String userDir = System.getProperty("user.dir", ".");
         return new Path[] {
+                AppPaths.dataFile(PROPERTIES_FILE),
                 Path.of(userDir, PROPERTIES_FILE),
                 Path.of(userDir, "Drickoi's", PROPERTIES_FILE),
                 Path.of(PROPERTIES_FILE),

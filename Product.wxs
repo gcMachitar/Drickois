@@ -1,19 +1,8 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="DrickSysApp" Language="1033" Version="1.0.0" Manufacturer="Drickoi" UpgradeCode="8F48BDA6-F2AF-4A16-B374-11C88A6C3B4A">
-    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
-
-    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+﻿<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="DrickSysApp" Language="1033" Version="1.0.0" Manufacturer="Drickoi" UpgradeCode="8F48BDA6-F2AF-4A16-B374-11C88A6C3B4A"><MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <Directory Id="TARGETDIR" Name="SourceDir">
-      <Directory Id="ProgramFilesFolder">
-        <Directory Id="INSTALLFOLDER" Name="DrickSysApp" />
-      </Directory>
-      <Directory Id="ProgramMenuFolder">
-        <Directory Id="ApplicationProgramsFolder" Name="DrickSysApp" />
-      </Directory>
-    </Directory>
+    
 
     <Feature Id="MainFeature" Title="DrickSysApp" Level="1">
       <ComponentGroupRef Id="DistFiles" />
@@ -22,7 +11,14 @@
     </Feature>
 
     <Icon Id="AppIcon" SourceFile="resources\myicon.png" />
-  </Product>
+  
+      <StandardDirectory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="DrickSysApp" />
+      </StandardDirectory>
+      <StandardDirectory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="DrickSysApp" />
+      </StandardDirectory>
+    </Package>
 
   <Fragment>
     <DirectoryRef Id="INSTALLFOLDER">
@@ -35,13 +31,7 @@
   <Fragment>
     <DirectoryRef Id="ApplicationProgramsFolder">
       <Component Id="StartMenuShortcutComponent" Guid="{7EE10489-3FCD-4F34-AFF8-BB8C43B7C0C0}">
-        <Shortcut
-          Id="ApplicationStartMenuShortcut"
-          Name="DrickSysApp"
-          Target="[INSTALLFOLDER]RunDrickSysApp.cmd"
-          WorkingDirectory="INSTALLFOLDER"
-          Icon="AppIcon"
-          Advertise="no" />
+        <Shortcut Id="ApplicationStartMenuShortcut" Name="DrickSysApp" Target="[INSTALLFOLDER]RunDrickSysApp.cmd" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" Advertise="no" />
         <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
         <RegistryValue Root="HKCU" Key="Software\Drickoi\DrickSysApp" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>
