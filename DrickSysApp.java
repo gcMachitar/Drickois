@@ -71,7 +71,7 @@ public class DrickSysApp extends JFrame {
     private static final String[] INVENTORY_CATEGORIES = {
             "Milktea", "Fruit Tea and Soda", "Lemonade", "Shakes", "Ricemeals",
             "Pasta", "Coffee", "Add Ons", "Hot tea", "Cups",
-            "Kitchen stocks", "Vegetables", "Baking", "For cleaning", "others"
+            "Kitchen stocks", "Vegetables", "Baking", "For cleaning", "Others"
     };
 
     private static final String ADD_ITEM_TEXT = "Add Item";
