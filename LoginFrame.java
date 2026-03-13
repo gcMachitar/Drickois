@@ -6,6 +6,12 @@ import javax.swing.*;
 public class LoginFrame extends JFrame {
     private static final long serialVersionUID = 1L;
 
+    static {
+        // Windows can throw "Cannot assign requested address: getsockopt" when IPv6/proxy routing is misconfigured.
+        // Prefer IPv4 for outbound connections so Supabase auth calls don't fail on affected machines.
+        configureNetworkDefaults();
+    }
+
     private final JTextField usernameField;
     private final JPasswordField passwordField;
     private final JCheckBox showPasswordCheckBox;
@@ -115,6 +121,28 @@ public class LoginFrame extends JFrame {
         setLocationRelativeTo(null);
 
         SwingUtilities.invokeLater(this::restoreSessionIfAvailable);
+    }
+
+    private static void configureNetworkDefaults() {
+        // Only set if caller didn't explicitly set these properties.
+        if (System.getProperty("java.net.preferIPv4Stack") == null) {
+            System.setProperty("java.net.preferIPv4Stack", "true");
+        }
+        if (System.getProperty("java.net.preferIPv6Addresses") == null) {
+            System.setProperty("java.net.preferIPv6Addresses", "false");
+        }
+    }
+
+    private static boolean exceptionMentionsGetsockopt(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.toLowerCase().contains("getsockopt")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     private JPanel createLabeledPanel(String labelText, JComponent field) {
@@ -280,6 +308,11 @@ public class LoginFrame extends JFrame {
             } else {
                 userMessage = "Login failed due to connection or configuration issue.\n\n"
                         + message;
+                if (exceptionMentionsGetsockopt(ex)) {
+                    userMessage += "\n\n"
+                            + "Tip: This Windows socket error is commonly caused by VPN/proxy/IPv6 routing issues.\n"
+                            + "Try disconnecting VPN/proxy, or using a different network, then reopen the app.";
+                }
             }
             JOptionPane.showMessageDialog(this,
                     userMessage,
@@ -317,6 +350,14 @@ public class LoginFrame extends JFrame {
                 );
             }
         } catch (IOException | InterruptedException ignored) {
+            String message = ignored.getMessage() == null ? "" : ignored.getMessage().trim();
+            String userMessage = "Cloud session restore failed. You can still log in manually.\n\n" + message;
+            if (exceptionMentionsGetsockopt(ignored)) {
+                userMessage += "\n\n"
+                        + "Tip: This Windows socket error is commonly caused by VPN/proxy/IPv6 routing issues.\n"
+                        + "Try disconnecting VPN/proxy, or using a different network, then reopen the app.";
+            }
+            JOptionPane.showMessageDialog(this, userMessage, "Cloud Offline", JOptionPane.WARNING_MESSAGE);
         }
     }
 
@@ -369,6 +410,7 @@ public class LoginFrame extends JFrame {
     }
 
     public static void main(String[] args) {
+        configureNetworkDefaults();
         SwingUtilities.invokeLater(() -> new LoginFrame().setVisible(true));
     }
 }

@@ -1112,12 +1112,58 @@ public class DrickSysApp extends JFrame {
     }
 
     private int findInventoryRowByName(String itemName) {
+        String target = itemName == null ? "" : itemName.trim();
+        if (target.isEmpty()) {
+            return -1;
+        }
         for (int i = 0; i < tableModel.getRowCount(); i++) {
-            if (String.valueOf(tableModel.getValueAt(i, 0)).equalsIgnoreCase(itemName)) {
+            String candidate = String.valueOf(tableModel.getValueAt(i, 0));
+            if (candidate != null && candidate.trim().equalsIgnoreCase(target)) {
                 return i;
             }
         }
         return -1;
+    }
+
+    private java.util.List<String> suggestInventoryItemNames(String query, int maxResults) {
+        String needle = query == null ? "" : query.trim().toLowerCase();
+        if (needle.isEmpty() || maxResults <= 0) {
+            return java.util.Collections.emptyList();
+        }
+
+        java.util.List<String> startsWith = new ArrayList<>();
+        java.util.List<String> contains = new ArrayList<>();
+        for (int i = 0; i < tableModel.getRowCount(); i++) {
+            String name = String.valueOf(tableModel.getValueAt(i, 0));
+            if (name == null) {
+                continue;
+            }
+            String normalized = name.trim();
+            if (normalized.isEmpty()) {
+                continue;
+            }
+            String lower = normalized.toLowerCase();
+            if (lower.startsWith(needle)) {
+                startsWith.add(normalized);
+            } else if (lower.contains(needle)) {
+                contains.add(normalized);
+            }
+        }
+
+        java.util.List<String> results = new ArrayList<>();
+        for (String name : startsWith) {
+            if (results.size() >= maxResults) {
+                break;
+            }
+            results.add(name);
+        }
+        for (String name : contains) {
+            if (results.size() >= maxResults) {
+                break;
+            }
+            results.add(name);
+        }
+        return results;
     }
 
     @SuppressWarnings("unused")
@@ -1236,7 +1282,16 @@ public class DrickSysApp extends JFrame {
         for (RecipeLine recipeLine : recipeLines) {
             int inventoryRow = findInventoryRowByName(recipeLine.itemName);
             if (inventoryRow < 0) {
-                JOptionPane.showMessageDialog(this, "Missing inventory item for recipe: " + recipeLine.itemName, "POS", JOptionPane.ERROR_MESSAGE);
+                java.util.List<String> suggestions = suggestInventoryItemNames(recipeLine.itemName, 3);
+                StringBuilder message = new StringBuilder();
+                message.append("Missing inventory item for recipe: ")
+                        .append(recipeLine.itemName)
+                        .append("\nProduct: ")
+                        .append(product.productName);
+                if (!suggestions.isEmpty()) {
+                    message.append("\nClosest matches: ").append(String.join(", ", suggestions));
+                }
+                JOptionPane.showMessageDialog(this, message.toString(), "POS", JOptionPane.ERROR_MESSAGE);
                 return;
             }
             int needed = recipeLine.quantityNeeded * quantity;
@@ -3237,7 +3292,9 @@ public class DrickSysApp extends JFrame {
                     continue;
                 }
                 try {
-                    RecipeLine line = new RecipeLine(parts.get(0), parts.get(1), Integer.parseInt(parts.get(2)));
+                    String productName = parts.get(0) == null ? "" : parts.get(0).trim();
+                    String itemName = parts.get(1) == null ? "" : parts.get(1).trim();
+                    RecipeLine line = new RecipeLine(productName, itemName, Integer.parseInt(parts.get(2).trim()));
                     getOrCreateRecipeLines(line.productName).add(line);
                 } catch (NumberFormatException ignored) {
                 }
@@ -4833,10 +4890,100 @@ public class DrickSysApp extends JFrame {
         logout();
     }
 
+    private static final java.util.concurrent.atomic.AtomicBoolean FATAL_DIALOG_SHOWN = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    private static void installFatalErrorHandler() {
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            if (throwable == null) {
+                return;
+            }
+            if (FATAL_DIALOG_SHOWN.getAndSet(true)) {
+                throwable.printStackTrace();
+                return;
+            }
+            SwingUtilities.invokeLater(() -> showFatalStartupDialog(
+                    "The app hit an unexpected error and cannot continue.",
+                    throwable
+            ));
+        });
+    }
+
+    private static void showFatalStartupDialog(String summary, Throwable throwable) {
+        String logPath = "";
+        try {
+            logPath = writeCrashLog(summary, throwable);
+        } catch (IOException ignored) {
+        }
+
+        StringBuilder message = new StringBuilder();
+        message.append(summary == null ? "Startup error." : summary);
+        message.append("\n\nReason: ").append(throwable.getClass().getSimpleName());
+        if (throwable.getMessage() != null && !throwable.getMessage().isBlank()) {
+            message.append("\n").append(throwable.getMessage().trim());
+        }
+        if (logPath != null && !logPath.isBlank()) {
+            message.append("\n\nDetails saved to:\n").append(logPath);
+        } else {
+            message.append("\n\nNo crash log could be written.");
+        }
+        message.append("\n\nIf this is a Supabase issue, check your network and `supabase.properties` / environment variables.");
+
+        try {
+            JOptionPane.showMessageDialog(null, message.toString(), "DrickSysApp - Startup Error", JOptionPane.ERROR_MESSAGE);
+        } catch (RuntimeException dialogError) {
+            System.err.println(message);
+            throwable.printStackTrace();
+            dialogError.printStackTrace();
+        }
+    }
+
+    private static String writeCrashLog(String summary, Throwable throwable) throws IOException {
+        java.text.SimpleDateFormat formatter = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss");
+        String timestamp = formatter.format(new java.util.Date());
+        java.nio.file.Path logFile = AppPaths.dataFile("crash-" + timestamp + ".log");
+        java.nio.file.Files.createDirectories(logFile.getParent());
+
+        try (java.io.BufferedWriter writer = java.nio.file.Files.newBufferedWriter(logFile)) {
+            writer.write("DrickSysApp crash log");
+            writer.newLine();
+            writer.write("Timestamp: " + timestamp);
+            writer.newLine();
+            writer.write("Summary: " + (summary == null ? "" : summary));
+            writer.newLine();
+            writer.newLine();
+            writer.write("Java: " + System.getProperty("java.version", ""));
+            writer.newLine();
+            writer.write("OS: " + System.getProperty("os.name", "") + " " + System.getProperty("os.version", ""));
+            writer.newLine();
+            writer.write("User: " + System.getProperty("user.name", ""));
+            writer.newLine();
+            writer.write("User dir: " + System.getProperty("user.dir", ""));
+            writer.newLine();
+            writer.write("Data dir: " + AppPaths.getDataDirectory());
+            writer.newLine();
+            writer.newLine();
+            if (throwable != null) {
+                writer.write("Exception:");
+                writer.newLine();
+                java.io.StringWriter sw = new java.io.StringWriter();
+                java.io.PrintWriter pw = new java.io.PrintWriter(sw);
+                throwable.printStackTrace(pw);
+                pw.flush();
+                writer.write(sw.toString());
+            }
+        }
+        return logFile.toString();
+    }
+
     public static void main(String[] args) {
+        installFatalErrorHandler();
         SwingUtilities.invokeLater(() -> {
-            LoginFrame loginFrame = new LoginFrame();
-            loginFrame.setVisible(true);
+            try {
+                LoginFrame loginFrame = new LoginFrame();
+                loginFrame.setVisible(true);
+            } catch (Throwable t) {
+                showFatalStartupDialog("Failed to open the login window.", t);
+            }
         });
     }
 }
