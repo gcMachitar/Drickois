@@ -2613,7 +2613,13 @@ public class DrickSysApp extends JFrame {
 
                 for (int i = 0; i < tableModel.getRowCount(); i++) {
                 for (int j = 0; j < tableModel.getColumnCount(); j++) {
-                    writer.write(csvEscape(tableModel.getValueAt(i, j)));
+                    Object value = tableModel.getValueAt(i, j);
+                    String textValue = value == null ? "" : String.valueOf(value);
+                    if ((j == 3 || j == 4) && !textValue.isBlank() && !textValue.equals("-")) {
+                        // Help spreadsheet apps keep the timestamp visible (avoid ###### by forcing text).
+                        textValue = "'" + textValue;
+                    }
+                    writer.write(csvEscape(textValue));
                     if (j < tableModel.getColumnCount() - 1) {
                         writer.write(",");
                         }
@@ -2628,7 +2634,12 @@ public class DrickSysApp extends JFrame {
                 for (SaleSummary sale : salesHistory) {
                     writer.write(csvEscape(sale.saleId));
                     writer.write(",");
-                    writer.write(csvEscape(sale.timestamp));
+                    String saleTimestamp = sale.timestamp == null ? "" : sale.timestamp;
+                    if (!saleTimestamp.isBlank() && !saleTimestamp.equals("-")) {
+                        // Help spreadsheet apps keep the timestamp visible (avoid ###### by forcing text).
+                        saleTimestamp = "'" + saleTimestamp;
+                    }
+                    writer.write(csvEscape(saleTimestamp));
                     writer.write(",");
                     writer.write(csvEscape(sale.items));
                     writer.write(",");
@@ -2666,7 +2677,7 @@ public class DrickSysApp extends JFrame {
 
         File fileToSave = fileChooser.getSelectedFile();
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileToSave))) {
-            writer.write("Bambu Vibe Inventory Backup");
+            writer.write("DrickSys Inventory Backup");
             writer.newLine();
             writer.write("Generated: " + dateFormatter.format(new Date()));
             writer.newLine();

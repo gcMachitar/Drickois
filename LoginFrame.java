@@ -124,11 +124,14 @@ public class LoginFrame extends JFrame {
     }
 
     private static void configureNetworkDefaults() {
-        // Only set if caller didn't explicitly set these properties.
-        if (System.getProperty("java.net.preferIPv4Stack") == null) {
+        // Force these defaults for stability on Windows machines with broken IPv6/VPN/proxy routing.
+        String preferIpv4 = System.getProperty("java.net.preferIPv4Stack");
+        if (!"true".equalsIgnoreCase(preferIpv4)) {
             System.setProperty("java.net.preferIPv4Stack", "true");
         }
-        if (System.getProperty("java.net.preferIPv6Addresses") == null) {
+
+        String preferIpv6Addrs = System.getProperty("java.net.preferIPv6Addresses");
+        if (!"false".equalsIgnoreCase(preferIpv6Addrs)) {
             System.setProperty("java.net.preferIPv6Addresses", "false");
         }
     }

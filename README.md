@@ -34,3 +34,6 @@ Build jar on Windows:
 
 Run packaged app:
 `.\RunDrickSysApp.cmd`
+
+Build wizard EXE installer (Windows, requires a JDK with jpackage):
+`powershell -ExecutionPolicy Bypass -File .\build-release-jpackage.ps1`
