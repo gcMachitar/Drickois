@@ -3,10 +3,13 @@ import java.awt.*;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.image.BufferedImage;
+import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
 import javax.swing.*;
 import javax.swing.border.TitledBorder;
+import javax.imageio.ImageIO;
 
 public class InventoryButtonPanel extends JPanel {
     private static final long serialVersionUID = 1L;
@@ -22,6 +25,8 @@ public class InventoryButtonPanel extends JPanel {
     private static final Color CLEAR_FIELDS_COLOR = new Color(200, 200, 200);
     private static final Color GENERATE_REPORT_COLOR = new Color(173, 216, 230);
 
+    private static final int ICON_SIZE = 16;
+    private static final Map<String, Icon> ICON_CACHE = new HashMap<>();
 
     private final transient Map<String, JButton> buttons;
 
@@ -95,10 +100,31 @@ public class InventoryButtonPanel extends JPanel {
 
     private void setButtonIcon(JButton button, String iconPath) {
         try {
-            ImageIcon icon = new ImageIcon(getClass().getResource(iconPath));
-            Image image = icon.getImage();
-            Image scaledImage = image.getScaledInstance(16, 16, Image.SCALE_SMOOTH);
-            button.setIcon(new ImageIcon(scaledImage));
+            Icon cached = ICON_CACHE.get(iconPath);
+            if (cached == null) {
+                try (InputStream input = getClass().getResourceAsStream(iconPath)) {
+                    if (input == null) {
+                        throw new IllegalArgumentException("Resource not found");
+                    }
+                    BufferedImage original = ImageIO.read(input);
+                    if (original == null) {
+                        throw new IllegalArgumentException("Unsupported image");
+                    }
+
+                    BufferedImage scaled = new BufferedImage(ICON_SIZE, ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
+                    Graphics2D graphics = scaled.createGraphics();
+                    graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                    graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    graphics.drawImage(original, 0, 0, ICON_SIZE, ICON_SIZE, null);
+                    graphics.dispose();
+
+                    cached = new ImageIcon(scaled);
+                    ICON_CACHE.put(iconPath, cached);
+                }
+            }
+
+            button.setIcon(cached);
             button.setHorizontalTextPosition(SwingConstants.RIGHT);
             button.setVerticalTextPosition(SwingConstants.CENTER);
             button.setIconTextGap(5);
