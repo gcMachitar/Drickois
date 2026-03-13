@@ -1,4 +1,7 @@
-Bambu Vibe Logistics Management System
+DrickSys
+How to Install DrickSys
+
+
 A Java Swing application for inventory and customer management
 
 Supabase setup (required for collaborators)
