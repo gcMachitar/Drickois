@@ -21,4 +21,4 @@ if not defined JAR_EXE (
 
 if not exist "dist" mkdir "dist"
 
-"%JAR_EXE%" cfm "dist\DrickSysApp.jar" "META-INF\MANIFEST.MF" *.class resources inventory.csv products.csv product_recipes.csv item_suppliers.csv
+"%JAR_EXE%" cfm "dist\DrickSysApp.jar" "META-INF\MANIFEST.MF" *.class resources inventory.csv products.csv product_recipes.csv item_suppliers.csv suppliers.csv

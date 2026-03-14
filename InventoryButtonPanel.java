@@ -34,7 +34,7 @@ public class InventoryButtonPanel extends JPanel {
     public InventoryButtonPanel(ActionListener addListener, ActionListener updateListener,
                                 ActionListener deleteListener, ActionListener clearListener,
                                 ActionListener generateReportListener) {
-        setLayout(new FlowLayout(FlowLayout.CENTER, 10, 10));
+        setLayout(new GridLayout(1, 0, 12, 10));
         setBackground(SECONDARY_COLOR);
         setBorder(BorderFactory.createTitledBorder(
                 BorderFactory.createLineBorder(BORDER_COLOR, 2),

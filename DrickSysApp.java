@@ -38,6 +38,8 @@ public class DrickSysApp extends JFrame {
     private JLabel statusBarLabel;
     private JLabel cloudStatusLabel;
     private JButton addButtonReference;
+    private JComboBox<String> posCategoryFilter;
+    private JTextField posSearchField;
     private JComboBox<String> posItemField;
     private JSpinner posQuantitySpinner;
     private DefaultTableModel cartTableModel;
@@ -55,11 +57,13 @@ public class DrickSysApp extends JFrame {
     private final transient SupabaseClient supabaseClient;
     private final transient SupabaseSession session;
 
-    private final SimpleDateFormat dateFormatter = new SimpleDateFormat("yyyy-MM-dd hh:mm:ss a");
+    private static final ThreadLocal<SimpleDateFormat> DATE_FORMATTER =
+            ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd hh:mm:ss a"));
     private static final String INVENTORY_FILE = AppPaths.dataFile("inventory.csv").toString();
     private static final String PRODUCTS_FILE = AppPaths.dataFile("products.csv").toString();
     private static final String RECIPES_FILE = AppPaths.dataFile("product_recipes.csv").toString();
     private static final String ITEM_SUPPLIERS_FILE = AppPaths.dataFile("item_suppliers.csv").toString();
+    private static final String SUPPLIERS_FILE = AppPaths.dataFile("suppliers.csv").toString();
     private static final String INVENTORY_TEXT_BACKUP_FILE = AppPaths.dataFile("inventory_backup.txt").toString();
     private static final String SALES_HISTORY_FILE = AppPaths.dataFile("sales_history.csv").toString();
     private static final String SALES_TEXT_BACKUP_FILE = AppPaths.dataFile("sales_backup.txt").toString();
@@ -108,6 +112,7 @@ public class DrickSysApp extends JFrame {
     private final transient List<SupabaseClient.SupplierRecord> supplierDirectory = new ArrayList<>();
     private final transient List<SupabaseClient.ExpirationRecord> expirationDirectory = new ArrayList<>();
     private final transient List<SupabaseClient.StockOutItemRecord> stockOutDirectory = new ArrayList<>();
+    private final transient java.util.concurrent.atomic.AtomicLong supplierLinkGeneration = new java.util.concurrent.atomic.AtomicLong();
     private boolean cloudConnected;
     private boolean cloudDisconnectDialogShown;
     private int sessionSalesCount;
@@ -172,9 +177,6 @@ public class DrickSysApp extends JFrame {
         if (appIcon != null) {
             setIconImage(appIcon.getImage());
         }
-        setSize(400, 450);
-        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
-        setLocationRelativeTo(null);
         setSize(1220, 900);
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setLocationRelativeTo(null);
@@ -186,6 +188,7 @@ public class DrickSysApp extends JFrame {
             @Override
             public void windowClosing(WindowEvent e) {
                 persistAllData();
+                shutdownExecutorService();
                 dispose();
             }
         });
@@ -226,17 +229,18 @@ public class DrickSysApp extends JFrame {
         updateCartSummary();
         updateSalesSummary();
 
+        if (addButtonReference != null) {
+            getRootPane().setDefaultButton(addButtonReference);
+        }
+        pack();
+        setMinimumSize(new Dimension(1220, 760));
+        Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
+        int targetWidth = Math.min(1480, Math.max(1220, screenSize.width - 160));
+        int targetHeight = Math.min(920, Math.max(760, screenSize.height - 140));
+        setSize(targetWidth, targetHeight);
+        setLocationRelativeTo(null);
+
         SwingUtilities.invokeLater(() -> {
-            if (addButtonReference != null) {
-                getRootPane().setDefaultButton(addButtonReference);
-            }
-            pack();
-            setMinimumSize(new Dimension(1220, 760));
-            Dimension screenSize = Toolkit.getDefaultToolkit().getScreenSize();
-            int targetWidth = Math.min(1480, Math.max(1220, screenSize.width - 160));
-            int targetHeight = Math.min(920, Math.max(760, screenSize.height - 140));
-            setSize(targetWidth, targetHeight);
-            setLocationRelativeTo(null);
             startInitialCloudSync();
             refreshReferenceDirectoriesAsync(false);
         });
@@ -249,6 +253,7 @@ public class DrickSysApp extends JFrame {
             AppPaths.migrateWorkingFileIfMissing("products.csv");
             AppPaths.migrateWorkingFileIfMissing("product_recipes.csv");
             AppPaths.migrateWorkingFileIfMissing("item_suppliers.csv");
+            AppPaths.migrateWorkingFileIfMissing("suppliers.csv");
             AppPaths.migrateWorkingFileIfMissing("sales_history.csv");
             AppPaths.migrateWorkingFileIfMissing("activity_logs.csv");
             AppPaths.migrateWorkingFileIfMissing("supabase.properties");
@@ -256,6 +261,7 @@ public class DrickSysApp extends JFrame {
             AppPaths.seedBundledFileIfMissing("/products.csv", "products.csv");
             AppPaths.seedBundledFileIfMissing("/product_recipes.csv", "product_recipes.csv");
             AppPaths.seedBundledFileIfMissing("/item_suppliers.csv", "item_suppliers.csv");
+            AppPaths.seedBundledFileIfMissing("/suppliers.csv", "suppliers.csv");
         } catch (IOException e) {
             LOGGER.log(Level.WARNING, "Failed to prepare app storage", e);
         }
@@ -409,10 +415,55 @@ public class DrickSysApp extends JFrame {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.weightx = 1.0;
 
+        posCategoryFilter = new JComboBox<>();
+        posCategoryFilter.setFont(MAIN_FONT);
+        posCategoryFilter.addActionListener(event -> {
+            if (event != null) {
+                // no-op: event observed to satisfy static analysis
+            }
+            refreshPosItemChoices();
+        });
+
+        posSearchField = new JTextField();
+        posSearchField.setFont(MAIN_FONT);
+        posSearchField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                refreshPosItemChoices();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                refreshPosItemChoices();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                refreshPosItemChoices();
+            }
+        });
+
         posItemField = new JComboBox<>();
         posItemField.setFont(MAIN_FONT);
+        posItemField.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "posAdd");
+        posItemField.getActionMap().put("posAdd", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                addSelectedItemToCart();
+            }
+        });
         posQuantitySpinner = new JSpinner(new SpinnerNumberModel(1, 1, 9999, 1));
         posQuantitySpinner.setFont(MAIN_FONT);
+        JComponent spinnerEditor = posQuantitySpinner.getEditor();
+        if (spinnerEditor instanceof JSpinner.DefaultEditor editor) {
+            editor.getTextField().getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "posAdd");
+            editor.getTextField().getActionMap().put("posAdd", new AbstractAction() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    addSelectedItemToCart();
+                }
+            });
+        }
         JButton addToCartButton = createDialogActionButton("Add To Cart");
         addToCartButton.addActionListener(event -> {
             event.getSource();
@@ -421,15 +472,34 @@ public class DrickSysApp extends JFrame {
 
         gbc.gridx = 0;
         gbc.gridy = 0;
-        entryPanel.add(new JLabel("Item"), gbc);
+        entryPanel.add(new JLabel("Category"), gbc);
         gbc.gridy = 1;
-        entryPanel.add(posItemField, gbc);
+        entryPanel.add(posCategoryFilter, gbc);
         gbc.gridy = 2;
-        entryPanel.add(new JLabel("Quantity"), gbc);
+        entryPanel.add(new JLabel("Search/Item"), gbc);
         gbc.gridy = 3;
-        entryPanel.add(posQuantitySpinner, gbc);
+        entryPanel.add(posSearchField, gbc);
         gbc.gridy = 4;
+        entryPanel.add(posItemField, gbc);
+        gbc.gridy = 5;
+        entryPanel.add(new JLabel("Quantity"), gbc);
+        gbc.gridy = 6;
+        entryPanel.add(posQuantitySpinner, gbc);
+        gbc.gridy = 7;
         entryPanel.add(addToCartButton, gbc);
+
+        // Keyboard shortcut: Ctrl+F focuses search
+        posPanel.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+                .put(KeyStroke.getKeyStroke(KeyEvent.VK_F, InputEvent.CTRL_DOWN_MASK), "focusPosSearch");
+        posPanel.getActionMap().put("focusPosSearch", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if (posSearchField != null) {
+                    posSearchField.requestFocusInWindow();
+                    posSearchField.selectAll();
+                }
+            }
+        });
 
         JPanel top = new JPanel(new BorderLayout(8, 8));
         top.setBackground(SECONDARY_COLOR);
@@ -674,7 +744,8 @@ public class DrickSysApp extends JFrame {
         gbc.gridy = row;
         gbc.gridwidth = 2;
         gbc.anchor = GridBagConstraints.CENTER;
-        gbc.fill = GridBagConstraints.NONE;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
 
         InventoryButtonPanel buttonPanel = new InventoryButtonPanel(
                 this::handleAddItemAction,
@@ -828,7 +899,6 @@ public class DrickSysApp extends JFrame {
 
         JPanel inputPanel = createStockInputPanel();
         inputPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
-        inputPanel.setMaximumSize(new Dimension(Integer.MAX_VALUE, inputPanel.getPreferredSize().height));
 
         topPanel.add(dashboardPanel);
         topPanel.add(Box.createRigidArea(new Dimension(0, 10)));
@@ -1086,12 +1156,23 @@ public class DrickSysApp extends JFrame {
     }
 
     private void refreshPosItemChoices() {
+        refreshPosCategoryChoices();
         if (posItemField == null) {
             return;
         }
+        String categoryFilter = posCategoryFilter == null ? "All" : String.valueOf(posCategoryFilter.getSelectedItem());
+        String query = posSearchField == null ? "" : posSearchField.getText().trim().toLowerCase();
         Object selected = posItemField.getSelectedItem();
         posItemField.removeAllItems();
         for (ProductDefinition product : productCatalog) {
+            if (categoryFilter != null && !"All".equalsIgnoreCase(categoryFilter)) {
+                if (product.category == null || !product.category.equalsIgnoreCase(categoryFilter)) {
+                    continue;
+                }
+            }
+            if (!query.isEmpty() && (product.productName == null || !product.productName.toLowerCase().contains(query))) {
+                continue;
+            }
             posItemField.addItem(product.productName);
         }
         if (selected != null) {
@@ -1308,6 +1389,23 @@ public class DrickSysApp extends JFrame {
         }
 
         double price = product.unitPrice;
+
+        // Merge duplicate lines
+        for (int i = 0; i < cartTableModel.getRowCount(); i++) {
+            String existingName = String.valueOf(cartTableModel.getValueAt(i, 0));
+            if (existingName != null && existingName.equalsIgnoreCase(itemName)) {
+                int existingQty = ((Number) cartTableModel.getValueAt(i, 1)).intValue();
+                int newQty = existingQty + quantity;
+                cartTableModel.setValueAt(newQty, i, 1);
+                cartTableModel.setValueAt(price, i, 2);
+                cartTableModel.setValueAt(newQty * price, i, 3);
+                updateCartSummary();
+                updateStatusBar("Updated " + itemName + " to qty " + newQty + " in the sale.", PRIMARY_COLOR.darker());
+                posQuantitySpinner.setValue(1);
+                return;
+            }
+        }
+
         cartTableModel.addRow(new Object[]{itemName, quantity, price, quantity * price});
         updateCartSummary();
         updateStatusBar("Added " + quantity + " x " + itemName + " to the current sale.", PRIMARY_COLOR.darker());
@@ -1593,6 +1691,119 @@ public class DrickSysApp extends JFrame {
         }
     }
 
+    private void refreshPosCategoryChoices() {
+        if (posCategoryFilter == null) {
+            return;
+        }
+        Object selected = posCategoryFilter.getSelectedItem();
+        java.util.Set<String> categories = new java.util.TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (ProductDefinition product : productCatalog) {
+            if (product.category != null && !product.category.isBlank()) {
+                categories.add(product.category.trim());
+            }
+        }
+        posCategoryFilter.removeAllItems();
+        posCategoryFilter.addItem("All");
+        for (String cat : categories) {
+            posCategoryFilter.addItem(cat);
+        }
+        if (selected != null) {
+            posCategoryFilter.setSelectedItem(selected);
+        }
+        if (posCategoryFilter.getSelectedIndex() == -1) {
+            posCategoryFilter.setSelectedIndex(0);
+        }
+    }
+
+    private String formatTimestamp(Date date) {
+        return DATE_FORMATTER.get().format(date);
+    }
+
+    private void loadLocalSuppliers() {
+        supplierDirectory.clear();
+        java.nio.file.Path path = java.nio.file.Path.of(SUPPLIERS_FILE);
+        if (!java.nio.file.Files.exists(path)) {
+            saveLocalSuppliers();
+            return;
+        }
+        try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(path, java.nio.charset.StandardCharsets.UTF_8)) {
+            reader.readLine(); // skip header if present
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isBlank()) {
+                    continue;
+                }
+                List<String> parts = parseCsvLine(line);
+                if (parts.size() < 2) {
+                    continue;
+                }
+                long supplierId;
+                try {
+                    supplierId = Long.parseLong(parts.get(0).trim());
+                } catch (NumberFormatException ignored) {
+                    continue;
+                }
+                String name = parts.get(1).trim();
+                if (name.isBlank()) {
+                    continue;
+                }
+                String contact = parts.size() > 2 ? parts.get(2).trim() : "";
+                String phone = parts.size() > 3 ? parts.get(3).trim() : "";
+                String email = parts.size() > 4 ? parts.get(4).trim() : "";
+                String address = parts.size() > 5 ? parts.get(5).trim() : "";
+                String status = parts.size() > 6 ? parts.get(6).trim() : "active";
+                if (status.isBlank()) {
+                    status = "active";
+                }
+                supplierDirectory.add(new SupabaseClient.SupplierRecord(supplierId, name, contact, phone, email, address, status));
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed reading local suppliers file", e);
+        }
+    }
+
+    private void saveLocalSuppliers() {
+        try {
+            AppPaths.ensureDataDirectoryExists();
+            java.nio.file.Path path = java.nio.file.Path.of(SUPPLIERS_FILE);
+            try (java.io.BufferedWriter writer = java.nio.file.Files.newBufferedWriter(path, java.nio.charset.StandardCharsets.UTF_8)) {
+                writer.write("Supplier ID,Supplier Name,Contact Person,Phone,Email,Address,Status");
+                writer.newLine();
+                for (SupabaseClient.SupplierRecord supplier : supplierDirectory) {
+                    if (supplier == null) {
+                        continue;
+                    }
+                    writer.write(csvEscape(supplier.getSupplierId()));
+                    writer.write(",");
+                    writer.write(csvEscape(supplier.getSupplierName()));
+                    writer.write(",");
+                    writer.write(csvEscape(supplier.getContactPerson()));
+                    writer.write(",");
+                    writer.write(csvEscape(supplier.getPhone()));
+                    writer.write(",");
+                    writer.write(csvEscape(supplier.getEmail()));
+                    writer.write(",");
+                    writer.write(csvEscape(supplier.getAddress()));
+                    writer.write(",");
+                    writer.write(csvEscape(supplier.getStatus()));
+                    writer.newLine();
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.log(Level.WARNING, "Failed writing local suppliers file", e);
+        }
+    }
+
+    private long nextLocalSupplierId() {
+        long maxId = 0L;
+        for (SupabaseClient.SupplierRecord supplier : supplierDirectory) {
+            if (supplier != null) {
+                maxId = Math.max(maxId, supplier.getSupplierId());
+            }
+        }
+        return maxId + 1L;
+    }
+
     private void saveItemSupplierAssignments() {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(ITEM_SUPPLIERS_FILE))) {
             writer.write("Item Name,Supplier ID");
@@ -1785,18 +1996,6 @@ public class DrickSysApp extends JFrame {
         return String.valueOf(tableModel.getValueAt(row, COL_CATEGORY));
     }
 
-    private List<String> findItemsForSupplier(long supplierId) {
-        List<String> items = new ArrayList<>();
-        for (int i = 0; i < tableModel.getRowCount(); i++) {
-            String itemName = String.valueOf(tableModel.getValueAt(i, COL_ITEM_NAME));
-            Long assignedSupplierId = findAssignedSupplierId(itemName);
-            if (assignedSupplierId != null && assignedSupplierId == supplierId) {
-                items.add(itemName);
-            }
-        }
-        return items;
-    }
-
     private List<String> getNonSellableInventoryItems() {
         List<String> items = new ArrayList<>();
         for (int i = 0; i < tableModel.getRowCount(); i++) {
@@ -1855,6 +2054,7 @@ public class DrickSysApp extends JFrame {
                 updateStatusBar("Cloud is not configured. Supplier, expiration, and stock-out links are local only.", Color.ORANGE.darker());
             }
             loadItemSupplierAssignments();
+            loadLocalSuppliers();
             refreshInventoryDerivedColumns();
             refreshStockDetailsPanel();
             return;
@@ -1888,7 +2088,12 @@ public class DrickSysApp extends JFrame {
                 });
             } catch (IOException | InterruptedException e) {
                 SwingUtilities.invokeLater(() -> {
-                    loadItemSupplierAssignments();
+                    if (itemSupplierAssignments.isEmpty()) {
+                        loadItemSupplierAssignments();
+                    }
+                    if (supplierDirectory.isEmpty()) {
+                        loadLocalSuppliers();
+                    }
                     refreshInventoryDerivedColumns();
                     refreshStockDetailsPanel();
                     if (showFeedback) {
@@ -1902,25 +2107,37 @@ public class DrickSysApp extends JFrame {
     private void refreshReferenceDirectoriesNow(Component dialog) {
         if (!isCloudConfigured()) {
             loadItemSupplierAssignments();
+            loadLocalSuppliers();
             return;
         }
         try {
-            supplierDirectory.clear();
-            supplierDirectory.addAll(supabaseClient.fetchSuppliers(session));
-            expirationDirectory.clear();
-            expirationDirectory.addAll(supabaseClient.fetchExpirations(session));
-            stockOutDirectory.clear();
-            stockOutDirectory.addAll(supabaseClient.fetchStockOutItems(session));
-            itemSupplierAssignments.clear();
+            List<SupabaseClient.SupplierRecord> suppliers = supabaseClient.fetchSuppliers(session);
+            List<SupabaseClient.ExpirationRecord> expirations = supabaseClient.fetchExpirations(session);
+            List<SupabaseClient.StockOutItemRecord> stockOuts = supabaseClient.fetchStockOutItems(session);
+            Map<String, Long> assignments = new LinkedHashMap<>();
             for (SupabaseClient.ItemSupplierAssignment assignment : supabaseClient.fetchItemSupplierAssignments(session)) {
                 if (!assignment.isPrimary() || isInvalidInventoryItemName(assignment.getItemName())) {
                     continue;
                 }
-                itemSupplierAssignments.put(normalizeInventoryKey(assignment.getItemName()), assignment.getSupplierId());
+                assignments.put(normalizeInventoryKey(assignment.getItemName()), assignment.getSupplierId());
             }
+
+            supplierDirectory.clear();
+            supplierDirectory.addAll(suppliers);
+            expirationDirectory.clear();
+            expirationDirectory.addAll(expirations);
+            stockOutDirectory.clear();
+            stockOutDirectory.addAll(stockOuts);
+            itemSupplierAssignments.clear();
+            itemSupplierAssignments.putAll(assignments);
             saveItemSupplierAssignments();
         } catch (IOException | InterruptedException ex) {
-            loadItemSupplierAssignments();
+            if (itemSupplierAssignments.isEmpty()) {
+                loadItemSupplierAssignments();
+            }
+            if (supplierDirectory.isEmpty()) {
+                loadLocalSuppliers();
+            }
             if (dialog != null) {
                 JOptionPane.showMessageDialog(dialog, "Failed to refresh linked stock data: " + ex.getMessage(), "Inventory Error", JOptionPane.ERROR_MESSAGE);
             }
@@ -2020,7 +2237,7 @@ public class DrickSysApp extends JFrame {
                 writer.write("Timestamp,Action,Details");
                 writer.newLine();
             }
-            writer.write(csvEscape(dateFormatter.format(new Date())));
+            writer.write(csvEscape(formatTimestamp(new Date())));
             writer.write(",");
             writer.write(csvEscape(actionType));
             writer.write(",");
@@ -2230,7 +2447,7 @@ public class DrickSysApp extends JFrame {
 
         String timestamp = lines.get(0).getSaleDate();
         if (timestamp == null || timestamp.isBlank()) {
-            timestamp = dateFormatter.format(new Date());
+            timestamp = formatTimestamp(new Date());
         } else if (timestamp.length() == 10) {
             timestamp = timestamp + " 00:00:00";
         }
@@ -2298,7 +2515,7 @@ public class DrickSysApp extends JFrame {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(SALES_TEXT_BACKUP_FILE))) {
             writer.write("Sales Backup");
             writer.newLine();
-            writer.write("Saved at: " + dateFormatter.format(new Date()));
+            writer.write("Saved at: " + formatTimestamp(new Date()));
             writer.newLine();
             writer.write("------------------------------------------------------------");
             writer.newLine();
@@ -2354,7 +2571,7 @@ public class DrickSysApp extends JFrame {
             }
 
             double price = 0.0;
-            String dateAdded = dateFormatter.format(new Date());
+        String dateAdded = formatTimestamp(new Date());
             tableModel.addRow(new Object[]{itemName, itemCategory, quantity, dateAdded, "-"});
             clearFields();
             updateTotalQuantity();
@@ -2380,7 +2597,7 @@ public class DrickSysApp extends JFrame {
     private void applyInventoryItemUpdate(int modelRow, String itemName, String itemCategory, int quantity) {
         double price = 0.0;
         String originalItemName = String.valueOf(tableModel.getValueAt(modelRow, 0));
-        String updatedDate = dateFormatter.format(new Date());
+        String updatedDate = formatTimestamp(new Date());
         tableModel.setValueAt(itemName, modelRow, 0);
         tableModel.setValueAt(itemCategory, modelRow, 1);
         tableModel.setValueAt(quantity, modelRow, 2);
@@ -2515,7 +2732,7 @@ public class DrickSysApp extends JFrame {
 
         double price = 0.0;
         String originalItemName = String.valueOf(tableModel.getValueAt(modelRow, 0));
-        String updatedDate = dateFormatter.format(new Date());
+        String updatedDate = formatTimestamp(new Date());
         tableModel.setValueAt(itemName, modelRow, 0);
         tableModel.setValueAt(itemCategory, modelRow, 1);
         tableModel.setValueAt(quantity, modelRow, 2);
@@ -2679,7 +2896,7 @@ public class DrickSysApp extends JFrame {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(fileToSave))) {
             writer.write("DrickSys Inventory Backup");
             writer.newLine();
-            writer.write("Generated: " + dateFormatter.format(new Date()));
+            writer.write("Generated: " + formatTimestamp(new Date()));
             writer.newLine();
             writer.write("------------------------------------------------------------");
             writer.newLine();
@@ -2886,11 +3103,15 @@ public class DrickSysApp extends JFrame {
         saveSalesHistory();
     }
 
+    private void shutdownExecutorService() {
+        executorService.shutdown();
+    }
+
     private void saveTextBackupSnapshot() {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(INVENTORY_TEXT_BACKUP_FILE))) {
             writer.write("Inventory Text Backup");
             writer.newLine();
-            writer.write("Saved at: " + dateFormatter.format(new Date()));
+            writer.write("Saved at: " + formatTimestamp(new Date()));
             writer.newLine();
             writer.write("------------------------------------------------------------");
             writer.newLine();
@@ -2967,7 +3188,7 @@ public class DrickSysApp extends JFrame {
                 SimpleDateFormat parser = new SimpleDateFormat(pattern);
                 parser.setLenient(false);
                 Date parsed = parser.parse(rawValue);
-                return dateFormatter.format(parsed);
+            return formatTimestamp(parsed);
             } catch (ParseException ignored) {
             }
         }
@@ -3163,7 +3384,7 @@ public class DrickSysApp extends JFrame {
         }
         );
 
-        String updatedAt = dateFormatter.format(new Date());
+        String updatedAt = formatTimestamp(new Date());
         for (Map.Entry<String, Integer> entry : ingredientUsage.entrySet()) {
             int row = findInventoryRowByName(entry.getKey());
             int newQuantity = ((Number) tableModel.getValueAt(row, 2)).intValue() - entry.getValue();
@@ -3267,6 +3488,8 @@ public class DrickSysApp extends JFrame {
         } catch (FileNotFoundException e) {
             LOGGER.log(Level.WARNING, "Products file unavailable", e);
         }
+        refreshPosCategoryChoices();
+        refreshPosItemChoices();
     }
 
     private void saveProducts() {
@@ -3362,7 +3585,7 @@ public class DrickSysApp extends JFrame {
         StringBuilder receipt = new StringBuilder();
         receipt.append("----- DrickSys Receipt -----\n");
         receipt.append("Sale ID: ").append(saleId).append("\n");
-        receipt.append("Date: ").append(dateFormatter.format(new Date())).append("\n");
+        receipt.append("Date: ").append(formatTimestamp(new Date())).append("\n");
         receipt.append("------------------------------\n");
         for (CartLine line : lines) {
             receipt.append(line.itemName)
@@ -4214,23 +4437,46 @@ public class DrickSysApp extends JFrame {
     }
 
     private JPanel createSuppliersWorkspaceTab(Component dialog) {
-        String[] columns = {"Item", "Category", "On Hand", "Supplier", "Supplier Status", "Contact"};
-        DefaultTableModel model = new DefaultTableModel(columns, 0) {
+        String[] supplierColumns = {"Supplier ID", "Supplier Name", "Status", "Contact", "Phone", "Email", "Address"};
+        DefaultTableModel supplierModel = new DefaultTableModel(supplierColumns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
             }
         };
-        JTable table = createWorkspaceTable(model);
-        table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
-        Runnable refresh = () -> {
-            model.setRowCount(0);
-            refreshReferenceDirectoriesNow(dialog);
+        JTable supplierTable = createWorkspaceTable(supplierModel);
+        supplierTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+
+        String[] itemColumns = {"Item", "Category", "On Hand", "Supplier", "Supplier Status", "Contact"};
+        DefaultTableModel itemModel = new DefaultTableModel(itemColumns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        JTable itemTable = createWorkspaceTable(itemModel);
+        itemTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+
+        Runnable repaintTables = () -> {
+            supplierModel.setRowCount(0);
+            for (SupabaseClient.SupplierRecord supplier : supplierDirectory) {
+                supplierModel.addRow(new Object[]{
+                        supplier.getSupplierId(),
+                        supplier.getSupplierName(),
+                        supplier.getStatus(),
+                        supplier.getContactPerson(),
+                        supplier.getPhone(),
+                        supplier.getEmail(),
+                        supplier.getAddress()
+                });
+            }
+
+            itemModel.setRowCount(0);
             for (String itemName : getNonSellableInventoryItems()) {
                 int quantity = findInventoryQuantityByName(itemName);
                 Long supplierId = findAssignedSupplierId(itemName);
                 SupabaseClient.SupplierRecord supplier = supplierId == null ? null : findSupplierRecordById(supplierId);
-                model.addRow(new Object[]{
+                itemModel.addRow(new Object[]{
                         itemName,
                         findInventoryCategoryByName(itemName),
                         quantity < 0 ? "" : quantity,
@@ -4240,16 +4486,43 @@ public class DrickSysApp extends JFrame {
                 });
             }
         };
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        panel.setBackground(SECONDARY_COLOR);
+
+        Runnable refreshAll = () -> {
+            refreshReferenceDirectoriesNow(dialog);
+            repaintTables.run();
+        };
+
+        JPanel directoryPanel = new JPanel(new BorderLayout(8, 8));
+        directoryPanel.setBackground(SECONDARY_COLOR);
+        JLabel directoryLabel = new JLabel("Supplier Directory (add suppliers here, then link them below).");
+        directoryLabel.setFont(MAIN_FONT.deriveFont(Font.BOLD));
+        directoryLabel.setForeground(TEXT_COLOR.darker());
+        directoryPanel.add(directoryLabel, BorderLayout.NORTH);
+        directoryPanel.add(new JScrollPane(supplierTable), BorderLayout.CENTER);
+
+        JPanel supplierActions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        supplierActions.setBackground(SECONDARY_COLOR);
+        supplierActions.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
+        JButton supplierAdd = createDialogActionButton("Add Supplier");
+        JButton supplierEdit = createDialogActionButton("Edit Supplier");
+        JButton supplierDelete = createDialogActionButton("Delete Supplier");
+        JButton supplierRefresh = createDialogActionButton("Refresh");
+        supplierActions.add(supplierAdd);
+        supplierActions.add(supplierEdit);
+        supplierActions.add(supplierDelete);
+        supplierActions.add(supplierRefresh);
+        directoryPanel.add(supplierActions, BorderLayout.SOUTH);
+
+        JPanel linkPanel = new JPanel(new BorderLayout(8, 8));
+        linkPanel.setBackground(SECONDARY_COLOR);
         JLabel helperLabel = new JLabel("Select multiple items with Ctrl/Shift, or use Select All.");
         helperLabel.setFont(MAIN_FONT.deriveFont(Font.BOLD));
         helperLabel.setForeground(TEXT_COLOR.darker());
-        panel.add(helperLabel, BorderLayout.NORTH);
-        panel.add(new JScrollPane(table), BorderLayout.CENTER);
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        actions.setBackground(SECONDARY_COLOR);
-        actions.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
+        linkPanel.add(helperLabel, BorderLayout.NORTH);
+        linkPanel.add(new JScrollPane(itemTable), BorderLayout.CENTER);
+        JPanel linkActions = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        linkActions.setBackground(SECONDARY_COLOR);
+        linkActions.setBorder(BorderFactory.createLineBorder(BORDER_COLOR, 1));
         JButton add = createDialogActionButton("Link Supplier");
         JButton edit = createDialogActionButton("Change Supplier");
         JButton delete = createDialogActionButton("Clear Supplier");
@@ -4259,7 +4532,7 @@ public class DrickSysApp extends JFrame {
 
         add.addActionListener(event -> {
             event.getSource();
-            int[] rows = table.getSelectedRows();
+            int[] rows = itemTable.getSelectedRows();
             if (rows.length == 0) {
                 JOptionPane.showMessageDialog(dialog, "Select one or more stock items first.", "No Selection", JOptionPane.WARNING_MESSAGE);
                 return;
@@ -4279,7 +4552,7 @@ public class DrickSysApp extends JFrame {
                     return super.getListCellRendererComponent(list, displayValue, index, isSelected, cellHasFocus);
                 }
             });
-            String dialogTitle = rows.length == 1 ? "Link Supplier to " + String.valueOf(model.getValueAt(rows[0], 0)) : "Link Supplier to " + rows.length + " selected items";
+            String dialogTitle = rows.length == 1 ? "Link Supplier to " + String.valueOf(itemModel.getValueAt(rows[0], 0)) : "Link Supplier to " + rows.length + " selected items";
             if (JOptionPane.showConfirmDialog(dialog, supplierField, dialogTitle, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
                 return;
             }
@@ -4289,25 +4562,39 @@ public class DrickSysApp extends JFrame {
             }
             List<String> selectedItems = new ArrayList<>();
             for (int row : rows) {
-                selectedItems.add(String.valueOf(model.getValueAt(row, 0)));
+                int modelRow = itemTable.convertRowIndexToModel(row);
+                selectedItems.add(String.valueOf(itemModel.getValueAt(modelRow, 0)));
             }
             for (String itemName : selectedItems) {
                 itemSupplierAssignments.put(normalizeInventoryKey(itemName), supplier.getSupplierId());
             }
             saveItemSupplierAssignments();
+            repaintTables.run();
             if (isCloudConfigured()) {
-                queueCloudOperation("assign item supplier", () -> {
-                    for (String itemName : selectedItems) {
-                        supabaseClient.assignSupplierToItem(session, itemName, supplier.getSupplierId(), true);
-                    }
+                long generation = supplierLinkGeneration.incrementAndGet();
+                executorService.submit(() -> {
+                    boolean ok = runCloudOperation("assign item supplier", () -> {
+                        for (String itemName : selectedItems) {
+                            supabaseClient.assignSupplierToItem(session, itemName, supplier.getSupplierId(), true);
+                        }
+                    });
+                    SwingUtilities.invokeLater(() -> {
+                        if (generation != supplierLinkGeneration.get()) {
+                            return;
+                        }
+                        if (ok) {
+                            refreshAll.run();
+                        } else {
+                            repaintTables.run();
+                        }
+                    });
                 });
             }
-            refresh.run();
         });
 
         edit.addActionListener(event -> {
             event.getSource();
-            int row = table.getSelectedRow();
+            int row = itemTable.getSelectedRow();
             if (row < 0) {
                 JOptionPane.showMessageDialog(dialog, "Select a stock item first.", "No Selection", JOptionPane.WARNING_MESSAGE);
                 return;
@@ -4317,7 +4604,7 @@ public class DrickSysApp extends JFrame {
 
         delete.addActionListener(event -> {
             event.getSource();
-            int[] rows = table.getSelectedRows();
+            int[] rows = itemTable.getSelectedRows();
             if (rows.length == 0) {
                 JOptionPane.showMessageDialog(dialog, "Select one or more stock items first.", "No Selection", JOptionPane.WARNING_MESSAGE);
                 return;
@@ -4327,46 +4614,200 @@ public class DrickSysApp extends JFrame {
             }
             List<String> selectedItems = new ArrayList<>();
             for (int row : rows) {
-                String itemName = String.valueOf(model.getValueAt(row, 0));
+                int modelRow = itemTable.convertRowIndexToModel(row);
+                String itemName = String.valueOf(itemModel.getValueAt(modelRow, 0));
                 selectedItems.add(itemName);
                 itemSupplierAssignments.remove(normalizeInventoryKey(itemName));
             }
             saveItemSupplierAssignments();
+            repaintTables.run();
             if (isCloudConfigured()) {
-                queueCloudOperation("clear item supplier", () -> {
-                    for (String itemName : selectedItems) {
-                        supabaseClient.clearSupplierAssignmentsForItem(session, itemName);
-                    }
+                long generation = supplierLinkGeneration.incrementAndGet();
+                executorService.submit(() -> {
+                    boolean ok = runCloudOperation("clear item supplier", () -> {
+                        for (String itemName : selectedItems) {
+                            supabaseClient.clearSupplierAssignmentsForItem(session, itemName);
+                        }
+                    });
+                    SwingUtilities.invokeLater(() -> {
+                        if (generation != supplierLinkGeneration.get()) {
+                            return;
+                        }
+                        if (ok) {
+                            refreshAll.run();
+                        } else {
+                            repaintTables.run();
+                        }
+                    });
                 });
             }
-            refresh.run();
         });
 
         selectAll.addActionListener(event -> {
             event.getSource();
-            if (table.getRowCount() > 0) {
-                table.setRowSelectionInterval(0, table.getRowCount() - 1);
+            if (itemTable.getRowCount() > 0) {
+                itemTable.setRowSelectionInterval(0, itemTable.getRowCount() - 1);
             }
         });
 
         clearSelection.addActionListener(event -> {
             event.getSource();
-            table.clearSelection();
+            itemTable.clearSelection();
         });
 
         refreshBtn.addActionListener(event -> {
             event.getSource();
-            refresh.run();
+            refreshAll.run();
         });
 
-        actions.add(add);
-        actions.add(edit);
-        actions.add(delete);
-        actions.add(selectAll);
-        actions.add(clearSelection);
-        actions.add(refreshBtn);
-        panel.add(actions, BorderLayout.SOUTH);
-        SwingUtilities.invokeLater(refresh);
+        supplierAdd.addActionListener(event -> {
+            event.getSource();
+            JTextField nameField = new JTextField(18);
+            JTextField contactField = new JTextField(18);
+            JTextField phoneField = new JTextField(18);
+            JTextField emailField = new JTextField(18);
+            JTextField addressField = new JTextField(18);
+            JTextField statusField = new JTextField("active", 18);
+            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
+            form.setBackground(SECONDARY_COLOR);
+            form.add(new JLabel("Supplier Name:")); form.add(nameField);
+            form.add(new JLabel("Contact Person:")); form.add(contactField);
+            form.add(new JLabel("Phone:")); form.add(phoneField);
+            form.add(new JLabel("Email:")); form.add(emailField);
+            form.add(new JLabel("Address:")); form.add(addressField);
+            form.add(new JLabel("Status:")); form.add(statusField);
+            if (JOptionPane.showConfirmDialog(dialog, form, "Add Supplier", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+                return;
+            }
+            if (nameField.getText().trim().isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "Supplier name is required.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String status = statusField.getText().trim().isEmpty() ? "active" : statusField.getText().trim();
+            try {
+                if (isCloudConfigured()) {
+                    supabaseClient.addSupplier(session, nameField.getText().trim(), contactField.getText().trim(), phoneField.getText().trim(), emailField.getText().trim(), addressField.getText().trim(), status);
+                } else {
+                    supplierDirectory.add(new SupabaseClient.SupplierRecord(nextLocalSupplierId(), nameField.getText().trim(), contactField.getText().trim(), phoneField.getText().trim(), emailField.getText().trim(), addressField.getText().trim(), status));
+                    saveLocalSuppliers();
+                }
+                refreshAll.run();
+            } catch (IOException | InterruptedException ex) {
+                JOptionPane.showMessageDialog(dialog, "Add supplier failed: " + ex.getMessage(), "Supplier Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        supplierEdit.addActionListener(event -> {
+            event.getSource();
+            int selectedRow = supplierTable.getSelectedRow();
+            if (selectedRow < 0) {
+                JOptionPane.showMessageDialog(dialog, "Select a supplier first.", "No Selection", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            long supplierId = Long.parseLong(String.valueOf(supplierModel.getValueAt(selectedRow, 0)));
+            SupabaseClient.SupplierRecord existing = findSupplierRecordById(supplierId);
+            if (existing == null) {
+                JOptionPane.showMessageDialog(dialog, "Supplier not found.", "Supplier Error", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+
+            JTextField nameField = new JTextField(existing.getSupplierName(), 18);
+            JTextField contactField = new JTextField(existing.getContactPerson(), 18);
+            JTextField phoneField = new JTextField(existing.getPhone(), 18);
+            JTextField emailField = new JTextField(existing.getEmail(), 18);
+            JTextField addressField = new JTextField(existing.getAddress(), 18);
+            JTextField statusField = new JTextField(existing.getStatus(), 18);
+            JPanel form = new JPanel(new GridLayout(0, 2, 6, 6));
+            form.setBackground(SECONDARY_COLOR);
+            form.add(new JLabel("Supplier Name:")); form.add(nameField);
+            form.add(new JLabel("Contact Person:")); form.add(contactField);
+            form.add(new JLabel("Phone:")); form.add(phoneField);
+            form.add(new JLabel("Email:")); form.add(emailField);
+            form.add(new JLabel("Address:")); form.add(addressField);
+            form.add(new JLabel("Status:")); form.add(statusField);
+            if (JOptionPane.showConfirmDialog(dialog, form, "Edit Supplier", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION) {
+                return;
+            }
+            if (nameField.getText().trim().isEmpty()) {
+                JOptionPane.showMessageDialog(dialog, "Supplier name is required.", "Validation", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            String status = statusField.getText().trim().isEmpty() ? "active" : statusField.getText().trim();
+            try {
+                if (isCloudConfigured()) {
+                    supabaseClient.updateSupplierById(session, supplierId, nameField.getText().trim(), contactField.getText().trim(), phoneField.getText().trim(), emailField.getText().trim(), addressField.getText().trim(), status);
+                } else {
+                    for (int i = 0; i < supplierDirectory.size(); i++) {
+                        SupabaseClient.SupplierRecord supplier = supplierDirectory.get(i);
+                        if (supplier.getSupplierId() == supplierId) {
+                            supplierDirectory.set(i, new SupabaseClient.SupplierRecord(supplierId, nameField.getText().trim(), contactField.getText().trim(), phoneField.getText().trim(), emailField.getText().trim(), addressField.getText().trim(), status));
+                            break;
+                        }
+                    }
+                    saveLocalSuppliers();
+                }
+                refreshAll.run();
+            } catch (IOException | InterruptedException ex) {
+                JOptionPane.showMessageDialog(dialog, "Edit supplier failed: " + ex.getMessage(), "Supplier Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        supplierDelete.addActionListener(event -> {
+            event.getSource();
+            int selectedRow = supplierTable.getSelectedRow();
+            if (selectedRow < 0) {
+                JOptionPane.showMessageDialog(dialog, "Select a supplier first.", "No Selection", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            long supplierId = Long.parseLong(String.valueOf(supplierModel.getValueAt(selectedRow, 0)));
+            if (JOptionPane.showConfirmDialog(dialog, "Delete supplier ID " + supplierId + "?", "Delete Supplier", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+                return;
+            }
+            try {
+                if (isCloudConfigured()) {
+                    supabaseClient.deleteSupplierById(session, supplierId);
+                } else {
+                    supplierDirectory.removeIf(supplier -> supplier.getSupplierId() == supplierId);
+                    boolean removedAssignment = false;
+                    for (String itemName : new ArrayList<>(itemSupplierAssignments.keySet())) {
+                        Long assignedId = itemSupplierAssignments.get(itemName);
+                        if (assignedId != null && assignedId == supplierId) {
+                            itemSupplierAssignments.remove(itemName);
+                            removedAssignment = true;
+                        }
+                    }
+                    if (removedAssignment) {
+                        saveItemSupplierAssignments();
+                    }
+                    saveLocalSuppliers();
+                }
+                refreshAll.run();
+            } catch (IOException | InterruptedException ex) {
+                JOptionPane.showMessageDialog(dialog, "Delete supplier failed: " + ex.getMessage(), "Supplier Error", JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        supplierRefresh.addActionListener(event -> {
+            event.getSource();
+            refreshAll.run();
+        });
+
+        linkActions.add(add);
+        linkActions.add(edit);
+        linkActions.add(delete);
+        linkActions.add(selectAll);
+        linkActions.add(clearSelection);
+        linkActions.add(refreshBtn);
+        linkPanel.add(linkActions, BorderLayout.SOUTH);
+
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, directoryPanel, linkPanel);
+        splitPane.setResizeWeight(0.38);
+        splitPane.setBorder(null);
+
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setBackground(SECONDARY_COLOR);
+        panel.add(splitPane, BorderLayout.CENTER);
+        SwingUtilities.invokeLater(refreshAll);
         return panel;
     }
 
@@ -4823,6 +5264,7 @@ public class DrickSysApp extends JFrame {
             new SupabaseSessionStore().clear();
         } catch (IOException ignored) {
         }
+        shutdownExecutorService();
         dispose();
         if (loginFrame != null) {
             loginFrame.showLoginFrame();
@@ -4897,7 +5339,6 @@ public class DrickSysApp extends JFrame {
     }
 
     private void handleLogoutAction(ActionEvent event) {
-        event.getSource();
         logout();
     }
 
@@ -4909,7 +5350,7 @@ public class DrickSysApp extends JFrame {
                 return;
             }
             if (FATAL_DIALOG_SHOWN.getAndSet(true)) {
-                throwable.printStackTrace();
+                LOGGER.log(Level.SEVERE, "Uncaught exception in thread " + thread.getName(), throwable);
                 return;
             }
             SwingUtilities.invokeLater(() -> showFatalStartupDialog(
@@ -4942,9 +5383,8 @@ public class DrickSysApp extends JFrame {
         try {
             JOptionPane.showMessageDialog(null, message.toString(), "DrickSysApp - Startup Error", JOptionPane.ERROR_MESSAGE);
         } catch (RuntimeException dialogError) {
-            System.err.println(message);
-            throwable.printStackTrace();
-            dialogError.printStackTrace();
+            LOGGER.log(Level.SEVERE, message.toString(), throwable);
+            LOGGER.log(Level.SEVERE, "Failed to show startup error dialog", dialogError);
         }
     }
 
